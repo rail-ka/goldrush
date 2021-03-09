@@ -34,3 +34,6 @@ rustc-hash = "1.1"
 num-traits = "0.2"
 num-derive = "0.3"
 #hyper = { version = "0.14", features = ["http1", "client", "runtime"] }
+bitvec = "0.21.1"
+harsh = "0.2.0"
+num_cpus = "1.13"

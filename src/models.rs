@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use actix::prelude::*;
 use std::{
     // cell::RefMut,
     // slice::Iter,
@@ -46,14 +47,14 @@ use std::{
 
 #[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
 pub struct Error {
-    code: u32,
-    message: String,
+    pub code: u32,
+    pub message: String,
 }
 
 #[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
 pub struct Balance {
-    balance: u32,
-    wallet: Wallet,
+    pub balance: u32,
+    pub wallet: Wallet,
 }
 
 // max items 1000
@@ -63,39 +64,41 @@ pub type Wallet = Vec<u32>;
 // min 0
 pub type Amount = u32;
 
-#[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct License {
-    id: u32,
-    dig_allowed: u32, // min 0
-    dig_used: Amount,
+    pub id: u32,
+    pub dig_allowed: u32, // min 0
+    pub dig_used: Amount,
 }
 
 pub type LicenseList = Vec<License>;
 
-#[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[derive(Message)]
+#[rtype(result = "usize")]
 pub struct Area {
-    pos_x: u32, // min 0
-    pos_y: u32, // min 0
-    size_x: u32, // min 1
-    size_y: u32, // min 1
+    pub pos_x: u32, // min 0
+    pub pos_y: u32, // min 0
+    pub size_x: u32, // min 1
+    pub size_y: u32, // min 1
 }
 
-#[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 pub struct Report {
-    area: Area,
-    amount: Amount,
+    pub area: Area,
+    pub amount: Amount,
 }
 
-#[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Dig {
     #[serde(rename = "licenseID")]
-    license_id: u32,
-    pos_x: u32, // min 0
-    pos_y: u32, // min 0
-    depth: u32, // min 1 max 100
+    pub license_id: u32,
+    pub pos_x: u32, // min 0
+    pub pos_y: u32, // min 0
+    pub depth: u32, // min 1 max 100
 }
 
 pub type Treasure = String;
