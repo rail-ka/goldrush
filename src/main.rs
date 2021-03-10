@@ -21,7 +21,6 @@ mod floor;
 //     web::{get, post, put, Json},
 //     {web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder},
 // };
-use actix_web::client::{Client, ClientBuilder, Connector};
 use env_logger::Env;
 use rustc_hash::{FxHashMap, FxHasher};
 use std::{cell::RefCell, rc::Rc};
@@ -37,13 +36,14 @@ use chrono::{Utc, DateTime};
 use crate::floor::Floor;
 use actix::Actor;
 use actix_rt::{Arbiter, System};
+use awc::{Client, ClientBuilder, Connector};
 
 pub type FxHashMapBuilder = BuildHasherDefault<FxHasher>;
 
-#[derive(Clone)]
-pub struct WebClient {
-    pub client: Client
-}
+// #[derive(Clone)]
+// pub struct WebClient {
+//     pub client: Client
+// }
 
 #[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
 pub struct Store {
@@ -100,25 +100,31 @@ const VARIANTS: [usize; 5] = [5, 10, 50, 100, 500];
 
 pub type BitFields = BitArr!(for 512, in Msb0, u8);
 
-fn create_client() -> Client {
-    let cb = ClientBuilder::new();
-    let connector = Connector::new()
-        .conn_keep_alive(Duration::from_secs(70))
-        // TODO: нужно не ждать ответа слишком долго, так как намеренно будут тянуть с ответом
-        // .conn_lifetime(Duration::from_secs((60*9)+58))
-        .conn_lifetime(Duration::from_secs(5))
-        .finish();
+// fn create_client() -> Client {
+//     let cb = ClientBuilder::new();
+//     let connector = Connector::new()
+//         .conn_keep_alive(Duration::from_secs(70))
+//         // TODO: нужно не ждать ответа слишком долго, так как намеренно будут тянуть с ответом
+//         // .conn_lifetime(Duration::from_secs((60*9)+58))
+//         .conn_lifetime(Duration::from_secs(5))
+//         .finish();
+//
+//     let client = cb
+//         .disable_redirects()
+//         .connector(connector)
+//         .finish();
+//     client
+// }
 
-    let client = cb
-        .disable_redirects()
-        .connector(connector)
-        .finish();
-    client
+async fn asd() {
+
 }
 
 // #[actix_rt::main]
-fn main() -> std::io::Result<()> {
-    let system = System::new();
+// -> std::io::Result<()>
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // let system = System::new();
     // env_logger::Builder::from_env(Env::default().default_filter_or("info"))
     //     .format(|buf, record| { writeln!(buf, "{}", re) })
     //     .init();
@@ -199,98 +205,35 @@ fn main() -> std::io::Result<()> {
     let (size_x, conn) = v500_20;
 
     for cpu in 0..cpus { // 4 cpu
-        let arbiter = Arbiter::new();
+        // let arbiter = Arbiter::new();
         let conn_del_cpus = conn / cpus; // 5
-        let execution = async move {
-            let client = create_client();
-            // let web_client = WebClient { client };
-            let builder_explore = build_explore(client);
-
-            // let explorer_actor = explore::Explorer {
-            //     builder_explore
-            // }.start();
-
-            let y_count = 3500 / conn;
-
-            for i in (cpu * conn_del_cpus)..((cpu * conn_del_cpus) + conn_del_cpus) {
-                // 0..4, 5..9, 10..14, 15..19
-
-                let start_y = i * y_count;
-                // println!("{} {} {}", i, y_count, start_y);
-                // let mut stop_y = (i+1) * y_count;
-
-                let start = Instant::now();
-
-                let mut y_iter = 0;
-
-                while y_iter < y_count {
-                    let pos_y = (start_y + y_iter) as u32;
-                    let mut pos_x = 0;
-                    while pos_x < 3500 {
-                        let area: Area = Area {
-                            pos_x,
-                            pos_y,
-                            size_x,
-                            size_y: 1,
-                        };
-                        // if pos_y > 3400 { println!("{}, {}", cpu, pos_y); }
-                        pos_x += size_x;
-
-                        // explorer_actor.send(area);
-
-                        // builder_explore.send_json(&area).await;
-
-                        // let res = explore(&builder_explore, area).await;
-                        // println!("{:?}", res);
-                    }
-                    y_iter += 1;
-                }
-            }
-        };
-        arbiter.spawn(execution);
-    }
-
-    {
-
-
-        // for i in 0..conn {
-        //     let arbiter = arbiters.get(arbiter_index).unwrap();
-        //     if (arbiter_index + 1) == cpus {
-        //         arbiter_index = 0;
-        //     } else {
-        //         arbiter_index += 1;
-        //     }
+        // let client = create_client();
+        // let execution = async move {
         //
-        //     let mut start_y = 0;
-        //     let mut stop_y = 3500;
+        //     // let client = create_client();
+        //     // let web_client = WebClient { client };
+        //     // let builder_explore = build_explore(client);
+        //     // let rc = Rc::new(builder_explore);
         //
-        //     if conn == 2 {
-        //         start_y = i * y_count; // 1750
-        //         stop_y = (i+1) * y_count;
-        //     } else if conn == 20 {
-        //         start_y = i * y_count; // 175
-        //         stop_y = (i+1) * y_count;
-        //     } else if conn == 100 {
-        //         start_y = i * y_count; // 35
-        //         stop_y = (i+1) * y_count;
-        //     } else { // 700
-        //         start_y = i * y_count; // 5
-        //         stop_y = (i+1) * y_count;
-        //     }
+        //     // let explorer_actor = explore::Explorer {
+        //     //     builder_explore
+        //     // }.start();
         //
-        //     let execution = async move {
-        //         let start_y = start_y.clone();
-        //         let y_count = y_count.clone();
-        //         let size_x = size_x.clone();
+        //     let y_count = 3500 / conn;
         //
+        //     for i in (cpu * conn_del_cpus)..((cpu * conn_del_cpus) + conn_del_cpus) {
+        //         // 0..4, 5..9, 10..14, 15..19
+        //
+        //         let start_y = i * y_count;
+        //         // println!("{} {} {}", i, y_count, start_y);
+        //         // let mut stop_y = (i+1) * y_count;
         //
         //         let start = Instant::now();
-        //
-        //         let mut pos_y = start_y;
         //
         //         let mut y_iter = 0;
         //
         //         while y_iter < y_count {
+        //             let pos_y = (start_y + y_iter) as u32;
         //             let mut pos_x = 0;
         //             while pos_x < 3500 {
         //                 let area: Area = Area {
@@ -299,43 +242,60 @@ fn main() -> std::io::Result<()> {
         //                     size_x,
         //                     size_y: 1,
         //                 };
-        //                 // println!("{}, {}, {}", pos_x, pos_y, size_x);
+        //                 // if pos_y > 3400 { println!("{}, {}", cpu, pos_y); }
         //                 pos_x += size_x;
         //
-        //                 let res = explore(&builder_explore.clone(), area).await;
-        //                 println!("{:?}", res);
+        //                 // explorer_actor.send(area);
+        //
+        //                 // let res = client.post(&*URL5).send_json(&area).await;
+        //
+        //                 // let res = explore(&builder_explore, area).await;
+        //                 // println!("{:?}", res);
         //             }
         //             y_iter += 1;
         //         }
-        //     };
-        //
-        //     arbiter.spawn(execution);
-        // }
+        //     }
+        // };
+        // arbiter.spawn(execution);
     }
 
-    // let mut y = 0;
-    // while y < 7 {
-    //     let mut x = 0;
-    //     let start_y = y * size * iter_count;
-    //
-    //     while x < 7 {
-    //         let start_x = x * size * iter_count;
-    //         // 49 вариантов
-    //
-    //         x += 1;
-    //     }
-    //     y += 1;
-    // }
+    let y_count = 3500 / conn;
+    let cpu = 0;
+    let conn_del_cpus = conn / cpus;
+
+    for i in (cpu * conn_del_cpus)..((cpu * conn_del_cpus) + conn_del_cpus) {
+        let start_y = i * y_count;
+
+        let start = Instant::now();
+
+        let mut y_iter = 0;
+
+        while y_iter < y_count {
+            let pos_y = (start_y + y_iter) as u32;
+            let mut pos_x = 0;
+            while pos_x < 3500 {
+                let area: Area = Area {
+                    pos_x,
+                    pos_y,
+                    size_x,
+                    size_y: 1,
+                };
+                pos_x += size_x;
+
+                // let res = client.post(&*URL5).send_json(&area).await;
+                // let res = explore(&builder_explore, area).await;
+                // println!("{:?}", res);
+
+                let client = hyper::Client::new();
+            }
+            y_iter += 1;
+        }
+    }
 
     // 1 variant, 5 size
     // {
     //     let size: u32 = 5;
     //     let iter_count = 100;
-    //
-    //     // variant for 2 connections
-    //     {
-    //     }
-    //
     //     // variant for 20 connections
     //     {
     //         let start = Instant::now();
@@ -351,72 +311,14 @@ fn main() -> std::io::Result<()> {
     //
     //         }
     //     }
-    //
-    //     // variant for 200 connections
-    //     {
-    //         let start = Instant::now();
-    //         let pos_x: u32 = 0;
-    //         let pos_y: u32 = 0;
-    //         let area: Area = Area {
-    //             pos_x,
-    //             pos_y,
-    //             size_x: size,
-    //             size_y: size,
-    //         };
-    //         for i in 0..200 {
-    //
-    //         }
-    //     }
-    //
-    //     // variant for 2000 connections
-    //     {
-    //         let start = Instant::now();
-    //         let pos_x: u32 = 0;
-    //         let pos_y: u32 = 0;
-    //         let area: Area = Area {
-    //             pos_x,
-    //             pos_y,
-    //             size_x: size,
-    //             size_y: size,
-    //         };
-    //         for i in 0..2000 {
-    //
-    //         }
-    //     }
-    //
     // }
-
-    // 2 variant, 10 size
-    {
-        // let pos_x: u32 = 500;
-        // let pos_y: u32 = 500;
-        // let size: u32 = 10;
-        // let iter_count = 50;
-    }
-
-    // 3 variant, 50 size
-    {
-        // let pos_x: u32 = 1000;
-        // let pos_y: u32 = 1000;
-        // let size: u32 = 50;
-        // let iter_count = 10;
-    }
-
-    // 4 variant, 100 size
-    {
-        // let pos_x: u32 = 1500;
-        // let pos_y: u32 = 1500;
-        // let size: u32 = 100;
-        // let iter_count = 5;
-    }
-
     // 5 variant, 500 size
-    {
+    // {
         // let pos_x: u32 = 2000;
         // let pos_y: u32 = 2000;
         // let size: u32 = 500;
         // let iter_count = 1;
-    }
+    // }
 
     // for floor in 0..FLOOR_COUNT {
     //     let mut floor_store = FloorStore {
@@ -485,6 +387,8 @@ fn main() -> std::io::Result<()> {
     //     }
     // }
 
-    // Ok(())
-    system.run()
+    // loop {}
+
+    Ok(())
+    // system.run()
 }
