@@ -26,6 +26,26 @@ fn build_url(path: &str) -> String {
     format!("http://{}:8000/{}", &*HOST, path)
 }
 
+async fn make_request<Req, Res>(client: &reqwest::Client, body: &Req, uri: &str) -> Result<Res, u16>
+    where Req: Serialize,
+          Res: DeserializeOwned {
+
+    let res = client.post(uri)
+        .json(body)
+        .send()
+        .await
+        .map_err(|_| 1000u16)?;
+
+    let status = res.status().as_u16();
+
+    if status != 200 {
+        return Err(status)
+    }
+
+    let body: Res = res.json().await.map_err(|_| 1002u16)?;
+    Ok(body)
+}
+
 lazy_static! {
     static ref URL1: String = build_url("health-check");
     static ref URL11: Uri = URL1.parse::<Uri>().unwrap();
@@ -58,6 +78,22 @@ pub async fn health_check2(client: &HyperClient<HttpConnector>) -> u16 {
         }
         Err(_) => {
             1000
+        }
+    }
+}
+pub async fn health_check3(client: &reqwest::Client) -> u16 {
+    match client
+        .get(&*URL1)
+        .send()
+        .await {
+        Ok(res) => {
+            res.status().as_u16()
+        }
+        Err(e) => {
+            match e.status() {
+                Some (e) => e.as_u16(),
+                None => 1000u16
+            }
         }
     }
 }
@@ -98,6 +134,22 @@ pub async fn balance2(req: &HyperClient<HttpConnector>) -> Result<Balance, u16> 
         }
     }
 }
+pub async fn balance3(client: &reqwest::Client) -> Result<Balance, u16> {
+    let res = client
+        .get(&*URL2)
+        .send()
+        .await
+        .map_err(|_| 1000u16)?;
+
+    let status = res.status().as_u16();
+
+    if status != 200 {
+        return Err(status)
+    }
+
+    let balance: Balance = res.json().await.map_err(|_| 1002u16)?;
+    Ok(balance)
+}
 
 // /licenses
 // request 2
@@ -134,6 +186,22 @@ pub async fn licenses2(req: &HyperClient<HttpConnector>) -> Result<LicenseList, 
             Err(1000)
         }
     }
+}
+pub async fn licenses3(client: &reqwest::Client) -> Result<LicenseList, u16> {
+    let res = client
+        .get(&*URL3)
+        .send()
+        .await
+        .map_err(|_| 1000u16)?;
+
+    let status = res.status().as_u16();
+
+    if status != 200 {
+        return Err(status)
+    }
+
+    let license: LicenseList = res.json().await.map_err(|_| 1002u16)?;
+    Ok(license)
 }
 
 async fn make_post<Req, Res>(req: &HyperClient<HttpConnector>, body: &Req, uri: &Uri) -> Result<Res, u16>
@@ -194,6 +262,9 @@ pub async fn pull_licenses2(req: &HyperClient<HttpConnector>, body: Wallet) -> R
         }
     }
 }
+pub async fn pull_licenses3(client: &reqwest::Client, body: &Wallet) -> Result<License, u16> {
+    make_request(client, body, &URL3).await
+}
 
 // post /explore
 // request 4
@@ -223,6 +294,9 @@ pub async fn explore(req: &FrozenClientRequest, body: Area) -> Result<Report, u1
 }
 pub async fn explore2(req: &HyperClient<HttpConnector>, body: Area) -> Result<Report, u16> {
     make_post(req, &body, &*URL55).await
+}
+pub async fn explore3(client: &reqwest::Client, body: &Area) -> Result<Report, u16> {
+    make_request(client, body, &URL5).await
 }
 
 // post /dig
@@ -255,6 +329,9 @@ pub async fn dig(req: &FrozenClientRequest, body: Dig) -> Result<TreasureList, u
 pub async fn dig2(req: &HyperClient<HttpConnector>, body: Dig) -> Result<TreasureList, u16> {
     make_post(req, &body, &*URL66).await
 }
+pub async fn dig3(client: &reqwest::Client, body: &Dig) -> Result<TreasureList, u16> {
+    make_request(client, body, &URL6).await
+}
 
 // post /cash
 // request 6
@@ -284,4 +361,7 @@ pub async fn cash(req: &FrozenClientRequest, body: Treasure) -> Result<Wallet, u
 }
 pub async fn cash2(req: &HyperClient<HttpConnector>, body: Treasure) -> Result<Wallet, u16> {
     make_post(req, &body, &*URL77).await
+}
+pub async fn cash3(client: &reqwest::Client, body: &Treasure) -> Result<Wallet, u16> {
+    make_request(client, body, &URL7).await
 }

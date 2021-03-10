@@ -17,7 +17,7 @@
 #rust /bin/bash
 ##/usr/src/runtime/docker-target/debug/runtime
 
-cargo build --release --target=x86_64-unknown-linux-musl
-docker build -f docker/Dockerfile -t goldrush:0.1 .
-docker tag goldrush:0.1 stor.highloadcup.ru/rally/puma_flyer
+cargo build --release --target=x86_64-unknown-linux-musl && \
+docker build -f docker/Dockerfile -t goldrush:0.1 . && \
+docker tag goldrush:0.1 stor.highloadcup.ru/rally/puma_flyer && \
 docker push stor.highloadcup.ru/rally/puma_flyer

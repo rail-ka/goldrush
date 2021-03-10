@@ -23,18 +23,19 @@ mod requests;
 // };
 // use env_logger::Env;
 use rustc_hash::{FxHashMap, FxHasher};
-use tokio::runtime::Runtime;
+// use tokio::runtime::Runtime;
 // use std::{cell::RefCell, rc::Rc};
 // use std::io::{stdout, Write};
 use crate::models::*;
 // use bincode::Options;
-use std::time::{Instant};
+use std::time::{Instant, SystemTime};
 use crate::requests::*;
 // use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasherDefault;
 use tokio::time::Duration;
 use hyper::client::HttpConnector;
 use hyper::Client;
+// use hyper_timeout::TimeoutConnector;
 // use bitvec::prelude::*;
 // use chrono::{Utc, DateTime};
 // use crate::floor::Floor;
@@ -128,7 +129,8 @@ struct Metric {
 }
 
 fn create_client() -> Client<HttpConnector> {
-    let mut  http_connector = HttpConnector::new();
+    let mut http_connector = HttpConnector::new();
+    // let mut connector = TimeoutConnector::new(http_connector);
     http_connector.set_keepalive(Some(Duration::from_secs(10)));
     // http_connector.set_connect_timeout(Some(Duration::from_millis(10_000)));
     http_connector.set_connect_timeout(Some(Duration::from_millis(10)));
@@ -141,13 +143,31 @@ fn create_client() -> Client<HttpConnector> {
     client
 }
 
+fn client_builder() -> reqwest::Client {
+    // let mut headers = reqwest::header::HeaderMap::new();
+    // headers.insert("content-type", reqwest::header::HeaderValue::from_static("application/json"));
+
+    let client = reqwest::ClientBuilder::new()
+        // .default_headers(headers)
+        .timeout(Duration::from_millis(7))
+        .connect_timeout(Duration::from_millis(3))
+        .pool_idle_timeout(Duration::from_secs(2))
+        .tcp_nodelay(true)
+        .build()
+        .unwrap();
+    client
+}
+
+
+
 /*
 запускает все на одном cpu
 */
-async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Result<(), u16> {
-    let size_x = size_x as u32;
-    let y_count = 3500 / conn;
-    let conn_del_cpus = conn / cpus;
+async fn run_explore(size_x: usize, cpus: usize, cpu: usize, area_divisor: usize) -> Result<(), u16> {
+    let size_x = size_x as u32; // размер поля в точках
+    // let y_count = 3500 / conn;
+    let y_count = 3500 / cpus / area_divisor;
+    // let conn_del_cpus = conn / cpus;
 
     let start = Instant::now();
     // min, max, sum, count
@@ -157,13 +177,17 @@ async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Res
 
     let mut errors: FxHashMap<u16, u32> = FxHashMap::with_capacity_and_hasher(100, fx_builder);
 
-    let client = create_client();
+    // let client = create_client();
+    let client = client_builder();
 
-    let from_inclusive = cpu * conn_del_cpus;
-    let to_exclusive = (cpu * conn_del_cpus) + conn_del_cpus;
+    // let from_inclusive = cpu * conn_del_cpus;
+    // let to_exclusive = (cpu * conn_del_cpus) + conn_del_cpus;
+
+    let from_inclusive = cpu;
+    let to_exclusive = cpu + 1;
 
     // println!("from_inclusive: {} to_exclusive: {} size_x: {} conn: {}", from_inclusive, to_exclusive, size_x, conn);
-    println!("size_x: {}", size_x);
+    println!("cpu: {} size_x: {} cpus: {} area_divisor: {} start: {:?}", cpu, size_x, cpus, area_divisor, SystemTime::now());
 
     let mut is_area_error = false;
 
@@ -191,11 +215,10 @@ async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Res
 
         let mut y_iter = 0;
 
-        let time = start.elapsed();
-
-        if time.as_secs() > (60 * 9) {
-            println!("timeout min: {}, max: {}, sum: {}, count: {}, avg: {}", time_explore.0, time_explore.1, time_explore.2, time_explore.3, (time_explore.2 / time_explore.3));
-        }
+        // let time = start.elapsed();
+        // if time.as_secs() > (60 * 9) {
+        //     println!("cpu: {} timeout min: {}, max: {}, sum: {}, count: {}, avg: {}", cpu, time_explore.0, time_explore.1, time_explore.2, time_explore.3, (time_explore.2 / time_explore.3));
+        // }
 
         while y_iter < y_count {
             let pos_y = (start_y + y_iter) as u32;
@@ -213,7 +236,8 @@ async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Res
 
                 let time = Instant::now();
 
-                let res = explore2(&client, area).await;
+                // let res = explore2(&client, area).await;
+                let res = explore3(&client, &area).await;
 
                 areas_count += 1;
 
@@ -234,7 +258,7 @@ async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Res
 
                 match res {
                     Ok(report) => {
-                        let amount = report.amount;
+                        let amount = report.amount as u64;
                         let ret_area = report.area;
                         if ret_area != area {
                             is_area_error = true;
@@ -247,12 +271,12 @@ async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Res
                             let sum = &mut amount_metric.sum;
                             let count = &mut amount_metric.count;
                             *count = *count + 1;
-                            *sum = *sum + millis;
-                            if millis > *max {
-                                *max = millis;
+                            *sum = *sum + amount;
+                            if amount > *max {
+                                *max = amount;
                             }
-                            if millis < *min {
-                                *min = millis;
+                            if amount < *min {
+                                *min = amount;
                             }
 
                             // if store.licences.len() == 0 {
@@ -286,17 +310,17 @@ async fn run_explore(size_x: usize, conn: usize, cpus: usize, cpu: usize) -> Res
 
     let end = start.elapsed();
 
-    println!("end: {}", end.as_millis());
-    println!("areas_count: {} areas_without_gold: {}", areas_count, areas_without_gold);
-    println!("explore min: {} max: {} avg: {}", time_explore.0, time_explore.1, (time_explore.2 / time_explore.3));
+    println!("cpu: {} end: {}", cpu, end.as_millis());
+    println!("cpu: {} areas_count: {} areas_without_gold: {}", cpu, areas_count, areas_without_gold);
+    println!("cpu: {} explore min: {} max: {} avg: {}", cpu, time_explore.0, time_explore.1, (time_explore.2 / time_explore.3));
 
-    println!("amounts min: {} max: {} avg: {}", amount_metric.min, amount_metric.max, (amount_metric.sum / amount_metric.count));
+    println!("cpu: {} amounts min: {} max: {} avg: {}", cpu, amount_metric.min, amount_metric.max, (amount_metric.sum / amount_metric.count));
 
     for (error_code, count) in errors {
-        println!("error_code: {}, count: {}", error_code, count);
+        println!("cpu: {} error_code: {}, count: {}", cpu, error_code, count);
     }
     if is_area_error {
-        println!("area equal error");
+        println!("cpu: {} area equal error",  cpu);
     }
     Ok(())
 }
@@ -311,7 +335,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     .init();
     // info!("main start!");
     // let time: DateTime<Utc> = Utc::now();
-    println!("main start");
+    // println!("main start");
 
     // let store = Store {
     //     cash: 0,
@@ -331,64 +355,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     необходимо так же записывать время на api запрос на каждом этаже: минимальное время, максимальное время, среднее арифметическое время
     */
 
-    // let v5_2 = (5, 2); // 10
-    // let v5_4: (usize, usize) = (5, 4); // 20
-    // let v5_20: (usize, usize) = (5, 20); // 100
-    // let v5_200: (usize, usize) = (5, 100); // 500
-    // let v5_2000: (usize, usize) = (5, 700); // 3_500
-
-    // let v10_2 = (10, 2); // 20
-    // let v10_4: (usize, usize) = (10, 4); // 40
-    // let v10_20: (usize, usize) = (10, 20); // 200
-    // let v10_100: (usize, usize) = (10, 100); // 1000
-    // let v10_700: (usize, usize) = (10, 700); // 7k
-
-    // let v50_2 = (50, 2); // 100
-    // let v50_4: (usize, usize) = (50, 4); // 200
-    // let v50_20: (usize, usize) = (50, 20); // 1000
-    // let v50_100: (usize, usize) = (50, 100); // 5k
-    // let v50_700: (usize, usize) = (50, 700); // 35k
-
-    // let v100_2 = (100, 2); // 200
-    // let v100_4: (usize, usize) = (100, 4); // 400
-    // let v100_20: (usize, usize) = (100, 20); // 2000
-    // let v100_100: (usize, usize) = (100, 100); // 10k
-    // let v100_700: (usize, usize) = (100, 700); // 70k
-
-    // let v500_2 = (500, 2); // 1000
-    // let v500_4: (usize, usize) = (500, 4); // 2000
-    // let v500_20: (usize, usize) = (500, 20); // 10k
-    // let v500_100: (usize, usize) = (500, 100); // 50k
-    // let v500_700: (usize, usize) = (500, 700); // 350k
-
-    let v50_4: (usize, usize) = (50, 2);
-    let v70_4: (usize, usize) = (70, 2);
-    let v100_4: (usize, usize) = (100, 2);
-    let v125_4: (usize, usize) = (125, 2);
-    // let v140_4: (usize, usize) = (140, 4);
-    // let v175_4: (usize, usize) = (175, 4);
-    // let v250_4: (usize, usize) = (250, 4);
-    // let v350_4: (usize, usize) = (350, 4);
-    // let v500_4: (usize, usize) = (500, 4);
-    // let v700_4: (usize, usize) = (700, 4);
-    // let v875_4: (usize, usize) = (875, 4);
-
     // let cpus = num_cpus::get();
     // println!("cpu count: {}", cpus);
     // let cpus = if cpus > 4 { 4 } else { cpus };
 
-    let cpus = 2;
-
     // let rt = Runtime::new()?;
-    let basic_rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
-    basic_rt.block_on(async {
+    rt.block_on(async {
         let start = Instant::now();
         loop {
-            let client = create_client();
-            if health_check2(&client).await == 200 {
+            let client = client_builder();
+            if health_check3(&client).await == 200 {
+                break;
+            }
+            if start.elapsed().as_secs() > 1 {
+                println!("too many times wait ready server");
                 break;
             }
         }
@@ -396,21 +380,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("server ready: {}", end.as_millis());
     });
 
-    let (size_x, conn) = v50_4;
-    let f = run_explore(size_x, conn, cpus, 0);
-    basic_rt.block_on(f);
+    // 1, 2, 4, 5, 7, 10, 14, 20, 25, 28, 35, 50, 70, 100, 125, 140,  175,  250,  350,  500,  700
 
-    let (size_x, conn) = v70_4;
-    let f = run_explore(size_x, conn, cpus, 0);
-    basic_rt.block_on(f);
+    let cpus = 2;
+    let size_x = 35;
+    // if cpus = 2 and size_x = 50, area_divisor one of 5, 7
+    // if cpus = 2 and size_x = 35, area_divisor one of 2, 5, 10
+    // (3500 / cpus / size_x) should be divided on area_divisor
+    let area_divisor = 2;
 
-    let (size_x, conn) = v100_4;
-    let f = run_explore(size_x, conn, cpus, 0);
-    basic_rt.block_on(f);
+    let f1 = run_explore(size_x, cpus, 0, area_divisor);
+    let f2 = run_explore(size_x, cpus, 0, area_divisor);
 
-    let (size_x, conn) = v125_4;
-    let f = run_explore(size_x, conn, cpus, 0);
-    basic_rt.block_on(f);
+    rt.block_on(async {
+        // area_divisor: 1, 2, 4, 5, 10, 20
+        run_explore(35, 1, 0, 20).await;
+
+        // let f1 = tokio::spawn(f1);
+        // let f2 = tokio::spawn(f2);
+        // tokio::join!(f1, f2);
+    });
+        // .map_err(|e| {
+        //     eprintln!("{}", e);
+        // });
 
     Ok(())
     // system.run()
