@@ -10,16 +10,23 @@ envs: RUST_LOG_STYLE=never
 
 Далее мы делаем запросы на копку. Что происходит дальше? мы попадаем вниз? Или можно продолжать копать?
 
+490 000 кладов, 122_500_000 вариантов размещения клада, один клад на 250 точек в трехмерном пространстве. Вероятность 1/250
+Как посчитать вероятность на плоскости?
+
 ## Build
 
 ```shell script
 #in wsl:
 cargo build --release --target=x86_64-unknown-linux-musl
 docker build -f docker/Dockerfile -t goldrush:0.1 .
+docker tag goldrush:0.1 stor.highloadcup.ru/rally/puma_flyer
+
 docker run --rm -it \
 -p 8000:8000 \
 -e ADDRESS=localhost \
 goldrush:0.1 ./goldrush
+
+docker push stor.highloadcup.ru/rally/puma_flyer
 ```
 
 https://www.andrew-thorburn.com/cross-compiling-a-simple-rust-web-app/
