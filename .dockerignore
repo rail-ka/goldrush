@@ -1,0 +1,4 @@
+target
+!target/x86_64-unknown-linux-musl/release/goldrush
+!target/release/goldrush
+!target/x86_64-unknown-linux-gnu/release/goldrush

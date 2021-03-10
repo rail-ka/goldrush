@@ -10,6 +10,21 @@ envs: RUST_LOG_STYLE=never
 
 Далее мы делаем запросы на копку. Что происходит дальше? мы попадаем вниз? Или можно продолжать копать?
 
+## Build
+
+```shell script
+#in wsl:
+cargo build --release --target=x86_64-unknown-linux-musl
+docker build -f docker/Dockerfile -t goldrush:0.1 .
+docker run --rm -it \
+-p 8000:8000 \
+-e ADDRESS=localhost \
+goldrush:0.1 ./goldrush
+```
+
+https://www.andrew-thorburn.com/cross-compiling-a-simple-rust-web-app/
+https://github.com/rust-embedded/cross
+
 ## Условия
 
 у вас одна цель - собрать как можно больше золота за отведенное время и не дать конкурентам ни шанса на победу. оборудование не может работать быстро, может глючить и зависать в работе.

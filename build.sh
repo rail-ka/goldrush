@@ -1,0 +1,18 @@
+docker run --rm -it \
+-v $(pwd):/usr/src/runtime \
+-v $(pwd)/../models:/usr/src/models \
+-v $(pwd)/../models-derive:/usr/src/models-derive \
+-v $(pwd)/docker-target:/usr/src/runtime/docker-target \
+-v $(pwd)/docker-cargo/git:/usr/local/cargo/git \
+-v $(pwd)/docker-cargo/registry:/usr/local/cargo/registry \
+-w /usr/src/runtime \
+--cpus=0.000 \
+rust cargo build --target-dir /usr/src/runtime/docker-target --offline &&
+echo '/usr/src/runtime/docker-target/debug/runtime' | pbcopy &&
+docker run --rm -it \
+-v $(pwd):/usr/src/runtime \
+-w /usr/src/runtime \
+-p 8080:8080 \
+-e RUST_LOG=runtime \
+rust /bin/bash
+#/usr/src/runtime/docker-target/debug/runtime

@@ -1,2 +1,8 @@
 /target
 .idea/
+**/*.rs.bk
+Cargo.lock
+.vscode/
+*.DS_Store
+/docker-target/
+/docker-cargo/

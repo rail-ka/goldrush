@@ -1,12 +1,12 @@
 use crate::models::{Balance, LicenseList, Wallet, License, Area, Report, Dig, TreasureList, Treasure};
-use std::error::Error;
+// use std::error::Error;
 // use crate::Client;
 use awc::{FrozenClientRequest, Client};
 use actix_http::ResponseError;
-use hyper::{body::{HttpBody as _, to_bytes}, Client as HyperClient, Uri, Request, Method, Body};
+use hyper::{body::{to_bytes}, Client as HyperClient, Uri, Request, Method, Body};
 use hyper::client::HttpConnector;
-use serde::{Serialize, Deserialize};
-use std::borrow::Borrow;
+use serde::{Serialize};
+// use std::borrow::Borrow;
 use serde::de::DeserializeOwned;
 // use actix_web::ResponseError;
 
@@ -87,7 +87,7 @@ pub async fn balance(req: &FrozenClientRequest) -> Result<Balance, u16> {
 }
 pub async fn balance2(req: &HyperClient<HttpConnector>) -> Result<Balance, u16> {
     match req.get((&*URL22).clone()).await {
-        Ok(mut res) => {
+        Ok(res) => {
             let body = res.into_body();
             let body = to_bytes(body).await.map_err(|_| 1001u16)?;
             let balance: Balance = serde_json::from_slice(&body).map_err(|_| 1002u16)?;
@@ -124,7 +124,7 @@ pub async fn licenses(req: &FrozenClientRequest) -> Result<LicenseList, u16> {
 }
 pub async fn licenses2(req: &HyperClient<HttpConnector>) -> Result<LicenseList, u16> {
     match req.get((&*URL33).clone()).await {
-        Ok(mut res) => {
+        Ok(res) => {
             let body = res.into_body();
             let body = to_bytes(body).await.map_err(|_| 1001u16)?;
             let license: LicenseList = serde_json::from_slice(&body).map_err(|_| 1002u16)?;
@@ -183,7 +183,7 @@ pub async fn pull_licenses2(req: &HyperClient<HttpConnector>, body: Wallet) -> R
         .body(Body::from(json))
         .map_err(|_| 1004u16)?;
     match req.request(request).await {
-        Ok(mut res) => {
+        Ok(res) => {
             let body = res.into_body();
             let body = to_bytes(body).await.map_err(|_| 1001u16)?;
             let license: License = serde_json::from_slice(&body).map_err(|_| 1002u16)?;

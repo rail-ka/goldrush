@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
-use actix::prelude::*;
+// use serde::{Serialize, Deserialize};
+// use actix::prelude::*;
 use std::{
     // cell::RefMut,
     // slice::Iter,
@@ -76,8 +76,8 @@ pub type LicenseList = Vec<License>;
 
 #[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-#[derive(Message)]
-#[rtype(result = "usize")]
+// #[derive(Message)]
+// #[rtype(result = "usize")]
 pub struct Area {
     pub pos_x: u32, // min 0
     pub pos_y: u32, // min 0
