@@ -47,28 +47,28 @@ use std::{
 
 #[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
 pub struct Error {
-    pub code: u32,
+    pub code: u64,
     pub message: String,
 }
 
 #[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
 pub struct Balance {
-    pub balance: u32,
+    pub balance: u64,
     pub wallet: Wallet,
 }
 
 // max items 1000
 // uniqueItems: true
-pub type Wallet = Vec<u32>;
+pub type Wallet = Vec<u64>;
 
 // min 0
-pub type Amount = u32;
+pub type Amount = u64;
 
 #[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct License {
-    pub id: u32,
-    pub dig_allowed: u32, // min 0
+    pub id: u64,
+    pub dig_allowed: u64, // min 0
     pub dig_used: Amount,
 }
 
@@ -79,10 +79,10 @@ pub type LicenseList = Vec<License>;
 // #[derive(Message)]
 // #[rtype(result = "usize")]
 pub struct Area {
-    pub pos_x: u32, // min 0
-    pub pos_y: u32, // min 0
-    pub size_x: u32, // min 1
-    pub size_y: u32, // min 1
+    pub pos_x: u64, // min 0
+    pub pos_y: u64, // min 0
+    pub size_x: u64, // min 1
+    pub size_y: u64, // min 1
 }
 
 #[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
@@ -95,10 +95,10 @@ pub struct Report {
 #[serde(rename_all = "camelCase")]
 pub struct Dig {
     #[serde(rename = "licenseID")]
-    pub license_id: u32,
-    pub pos_x: u32, // min 0
-    pub pos_y: u32, // min 0
-    pub depth: u32, // min 1 max 100
+    pub license_id: u64,
+    pub pos_x: u64, // min 0
+    pub pos_y: u64, // min 0
+    pub depth: u64, // min 1 max 100
 }
 
 pub type Treasure = String;
