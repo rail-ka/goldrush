@@ -35,6 +35,7 @@ use std::hash::BuildHasherDefault;
 use tokio::time::Duration;
 use hyper::client::HttpConnector;
 use hyper::Client;
+use std::collections::{BinaryHeap, binary_heap::PeekMut};
 // use hyper_timeout::TimeoutConnector;
 // use bitvec::prelude::*;
 // use chrono::{Utc, DateTime};
@@ -161,30 +162,36 @@ fn client_builder(timeout_millis: u64) -> reqwest::Client {
 
 #[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
 struct ExploreArgs {
-    pub size_x: u64, // размер поля в точках
-    pub size_y: u64, // размер поля в точках
-    pub cpus: u64,
-    pub cpu: u64,
-    pub area_divisor: u64,
-    pub start_x: u64,
-    pub timeout_millis: u64,
+    pub step_x: u64, // размер поля в точках, то есть шаг координаты х
+    pub step_y: u64, // размер поля в точках, то есть шаг координаты у
+    pub size_x: u64,
+    pub size_y: u64,
+    pub cpus: u64, // количество воркеров
+    pub cpu: u64, // номер текущего воркера
+    pub area_divisor: u64, // на сколько нужно поделить поле (size_y / area_divisor), делится координата у
+    pub start_x: u64, // с какой точки координаты х начать
+    pub start_y: u64, // с какой точки координаты у начать
+    pub timeout_millis: u64, // максимальное время для запроса в миллисекундах
 }
 
 /*
 запускает все на одном cpu
 */
-async fn run_explore(args: ExploreArgs) -> Result<Metric, u16> {
+async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<BinaryHeap<Report>, u16> {
     let ExploreArgs {
+        step_x: step_x,
+        step_y: step_y,
         size_x,
         size_y,
         cpus,
         cpu,
         area_divisor,
         start_x,
+        start_y,
         timeout_millis,
     } = args;
 
-    let y_iter_count = 3500u64 / area_divisor / cpus / size_y;
+    let y_iter_count = size_y / area_divisor / cpus / step_y;
 
     let start = Instant::now();
     // min, max, sum, count
@@ -192,16 +199,21 @@ async fn run_explore(args: ExploreArgs) -> Result<Metric, u16> {
 
     let fx_builder: FxHashMapBuilder = FxHashMapBuilder::default();
 
-    let mut errors: FxHashMap<u16, u32> = FxHashMap::with_capacity_and_hasher(100, fx_builder);
+    let mut errors: FxHashMap<u16, u32> = FxHashMap::with_capacity_and_hasher(100, fx_builder.clone());
 
     let client = client_builder(timeout_millis);
 
-    println!("cpu: {} size_x: {} size_y: {} cpus: {} area_divisor: {}", cpu, size_x, size_y, cpus, area_divisor);
+    if is_log {
+        println!("cpu: {} step_x: {} step_y: {} cpus: {} area_divisor: {}", cpu, step_x, step_y, cpus, area_divisor);
+        println!("size_x: {} size_y: {} areas_count: {} ", size_x, size_y, (size_x / step_x));
+    }
+
 
     let mut is_area_error = false;
 
     let mut areas_without_gold = 0;
-    let mut areas_count = 0;
+
+    let mut amount_map: FxHashMap<u64, u64> = FxHashMap::with_capacity_and_hasher(14000, fx_builder.clone());
 
     let mut amount_metric = Metric {
         min: u64::MAX,
@@ -210,30 +222,34 @@ async fn run_explore(args: ExploreArgs) -> Result<Metric, u16> {
         count: 0,
     };
 
-    let start_y = cpu * y_iter_count * size_y;
+    let mut extremes_count = 0;
+
+    let start_y = start_y + (cpu * y_iter_count * step_y);
 
     let mut y_iter = 0;
 
-    while y_iter < y_iter_count {
-        let pos_y = start_y + (y_iter * size_y);
+    let cap =  if level > 0 { (((size_x * size_y) / area_divisor) / step_x) / step_y } else { 60 }; // 17_500 for level 0 and 5 for level 1
+
+    let mut reports: BinaryHeap<Report> = BinaryHeap::with_capacity(cap as usize);
+
+    'y_iter: while y_iter < y_iter_count {
+        let pos_y = start_y + (y_iter * step_y);
         let mut pos_x = start_x;
 
-        while pos_x < 3500 {
+        'x_iter: while pos_x < (start_x + size_x) {
             let area: Area = Area {
                 pos_x,
                 pos_y,
-                size_x,
-                size_y,
+                size_x: step_x,
+                size_y: step_y,
             };
 
-            pos_x += size_x;
+            pos_x += step_x;
 
             let time = Instant::now();
 
             // let res = explore2(&client, area).await;
             let res = explore3(&client, &area).await;
-
-            areas_count += 1;
 
             let duration = time.elapsed();
             let millis = duration.as_micros() as u64;
@@ -252,6 +268,9 @@ async fn run_explore(args: ExploreArgs) -> Result<Metric, u16> {
 
             match res {
                 Ok(report) => {
+                    // если нашли большое количество экстремумов, то не продолжать поиски,
+                    // переходить на следующее поле.
+
                     let amount = report.amount as u64;
                     let ret_area = report.area;
                     if ret_area != area {
@@ -259,11 +278,38 @@ async fn run_explore(args: ExploreArgs) -> Result<Metric, u16> {
                     }
 
                     if amount > 0 {
+                        match amount_map.get_mut(&amount) {
+                            Some(v) => {
+                                *v += 1;
+                            }
+                            None => {
+                                amount_map.insert(amount, 1);
+                            }
+                        }
 
                         let min = &mut amount_metric.min;
                         let max = &mut amount_metric.max;
                         let sum = &mut amount_metric.sum;
                         let count = &mut amount_metric.count;
+
+                        if level == 0 {
+                            // экстремумы - те, которые в 5 раз больше минимального значения
+                            // FIXME: const
+                            if amount > (*min * 5) {
+                                extremes_count += 1;
+                                // TODO: стоит туда отправлять только экстремумы?
+                                reports.push(report);
+
+                                // FIXME: const
+                                if extremes_count > 50 {
+                                    break 'y_iter;
+                                }
+                            }
+                        } else {
+                            reports.push(report);
+                        }
+
+
                         *count = *count + 1;
                         *sum = *sum + amount;
                         if amount > *max {
@@ -303,24 +349,73 @@ async fn run_explore(args: ExploreArgs) -> Result<Metric, u16> {
 
     let end = start.elapsed();
 
-    println!("cpu: {} end: {}", cpu, end.as_millis());
-    println!("cpu: {} areas_count: {} areas_without_gold: {}", cpu, areas_count, areas_without_gold);
+    if is_log {
+        println!("end: {}", end.as_millis());
 
-    if time_explore.3 > 0 {
-        println!("cpu: {} explore min: {} max: {} avg: {}", cpu, time_explore.0, time_explore.1, (time_explore.2 / time_explore.3));
+        if level < 2 {
+            println!("areas_without_gold: {}", areas_without_gold);
+        }
+
+        if time_explore.3 > 0 {
+            println!("explore min: {} max: {} avg: {}", time_explore.0, time_explore.1, (time_explore.2 / time_explore.3));
+        }
+
+        // array_extremes_count - число полей с большим числом сундуков
+        if amount_metric.count > 0 && level != 2 {
+            println!("area_amounts_min: {} area_max: {} area_amounts_avg: {} array_extremes_count (> min*5): {}", amount_metric.min, amount_metric.max, (amount_metric.sum / amount_metric.count), extremes_count);
+
+            for (amount_in_area, areas_count) in amount_map.iter() {
+                println!("amount_in_area: {} areas_count: {}", amount_in_area, areas_count);
+            }
+        }
+        if level == 2 {
+            println!("exists in point: {}", amount_metric.sum);
+        }
+
+        for (error_code, count) in errors {
+            println!("error_code: {}, count: {}", error_code, count);
+        }
+        if is_area_error {
+            println!("area equal error");
+        }
     }
 
-    if amount_metric.count > 0 {
-        println!("cpu: {} amounts min: {} max: {} avg: {}", cpu, amount_metric.min, amount_metric.max, (amount_metric.sum / amount_metric.count));
-    }
+    Ok(reports)
+}
 
-    for (error_code, count) in errors {
-        println!("cpu: {} error_code: {}, count: {}", cpu, error_code, count);
+async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, client: &reqwest::Client) -> License {
+    if licenses.is_empty() {
+        if balance.balance == 0 {
+            let license = pull_licenses3(&client, &Vec::new()).await;
+            if let Ok(license) = license {
+                licenses.push(license);
+                license
+            } else {
+                get_license(licenses, balance, client).await
+            }
+        } else {
+            // FIXME: const value 1 for license amount
+            let coin = balance.wallet.pop().unwrap_or(0);
+            balance.balance -= 1;
+            let license = pull_licenses3(&client, &vec![coin]).await;
+            if let Ok(license) = license {
+                licenses.push(license);
+                license
+            } else {
+                get_license(licenses, balance, client).await
+            }
+        }
+    } else {
+        let license = licenses.peek_mut().unwrap();
+        if license.dig_count() == 0 {
+            PeekMut::<'_, models::License>::pop(license);
+            // license.pop();
+            get_license(licenses, balance, client).await
+        } else {
+            PeekMut::<'_, models::License>::pop(license)
+            // license.pop()
+        }
     }
-    if is_area_error {
-        println!("cpu: {} area equal error",  cpu);
-    }
-    Ok(amount_metric)
 }
 
 // #[actix_rt::main]
@@ -365,7 +460,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rt.block_on(async {
         let start = Instant::now();
         loop {
-            let client = client_builder(7);
+            let client = client_builder(10);
             if health_check3(&client).await == 200 {
                 break;
             }
@@ -378,7 +473,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("server ready: {}", end.as_millis());
     });
 
+    // for 3500:
     // 1, 2, 4, 5, 7, 10, 14, 20, 25, 28, 35, 50, 70, 100, 125, 140,  175,  250,  350,  500,  700
+    // for 35:
+    // 1, 5, 7
 
     // let cpus = 2;
     // let size_x = 35;
@@ -389,46 +487,93 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let f1 = run_explore(size_x, cpus, 0, area_divisor);
     // let f2 = run_explore(size_x, cpus, 0, area_divisor);
 
-    rt.block_on(async {
+    let res = rt.block_on(async {
         // area_divisor: 1, 2, 4, 5, 10, 20
-        // run_explore(35, 1, 1, 0, 20).await;
-        // run_explore(ExploreArgs {
-        //     size_x: 35,
-        //     size_y: 1,
-        //     cpus: 1,
-        //     cpu: 0,
-        //     area_divisor: 20,
-        //     start_x: 0,
-        //     timeout_millis: 7
-        // }).await;
-
-        let args7 = ExploreArgs {
+        // FIXME: const
+        let args = ExploreArgs {
+            step_x: 35,
+            step_y: 1,
             size_x: 3500,
-            size_y: 500,
-            cpus: 7,
+            size_y: 3500,
+            cpus: 1,
             cpu: 0,
-            area_divisor: 1,
+            area_divisor: 20,
             start_x: 0,
-            timeout_millis: 60_000,
+            start_y: 0,
+            timeout_millis: 10,
         };
-        let a0 = run_explore(args7.clone()).await;
-        let a1 = run_explore(ExploreArgs { cpu: 1, ..args7 }).await;
-        let a2 = run_explore(ExploreArgs { cpu: 2, ..args7 }).await;
-        let a3 = run_explore(ExploreArgs { cpu: 3, ..args7 }).await;
-        let a4 = run_explore(ExploreArgs { cpu: 4, ..args7 }).await;
-        let a5 = run_explore(ExploreArgs { cpu: 5, ..args7 }).await;
-        let a6 = run_explore(ExploreArgs { cpu: 6, ..args7 }).await;
 
-        println!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", a0, a1, a2, a3, a4, a5, a6)
+        run_explore(ExploreArgs { cpu: 0, ..args }, false, 0).await
+
+        // for i in 0..1  {
+        //     run_explore(ExploreArgs { cpu: i, ..args }).await;
+        // }
 
         // let f1 = tokio::spawn(f1);
         // let f2 = tokio::spawn(f2);
         // tokio::join!(f1, f2);
     });
-        // .map_err(|e| {
-        //     eprintln!("{}", e);
-        // });
+
+    if let Ok(mut res) = res {
+        rt.block_on(async {
+            let mut licenses: BinaryHeap<License> = BinaryHeap::with_capacity(10);
+            let mut balance: Balance = Balance {
+                balance: 0,
+                wallet: Vec::with_capacity(500),
+            };
+            let client = client_builder(20);
+            let empty_wallet: Wallet = vec![];
+
+            while let Some(report) = res.pop() {
+                // FIXME: const
+                let args = ExploreArgs {
+                    step_x: 7,
+                    step_y: 1,
+                    size_x: 35,
+                    size_y: 1,
+                    cpus: 1,
+                    cpu: 0,
+                    area_divisor: 1,
+                    start_x: report.area.pos_x,
+                    start_y: report.area.pos_y,
+                    timeout_millis: 10,
+                };
+
+                let res = run_explore(args, false, 1).await;
+                if let Ok(mut bh) = res {
+                    while let Some(report) = bh.pop() {
+                        // TODO: стоит ли делать explore? может быстрее сразу копать?
+                        // FIXME: const
+                        let args = ExploreArgs {
+                            step_x: 1,
+                            step_y: 1,
+                            size_x: 7,
+                            size_y: 1,
+                            cpus: 1,
+                            cpu: 0,
+                            area_divisor: 1,
+                            start_x: report.area.pos_x,
+                            start_y: report.area.pos_y,
+                            timeout_millis: 10,
+                        };
+
+                        let res = run_explore(args, true, 2).await;
+                        if let Ok(mut res) = res {
+                            // тут уже либо есть либо нет
+                            let h = res.peek();
+                            if let Some(report) = h {
+                                if report.amount > 0 {
+                                    let x = report.area.pos_x;
+                                    let y = report.area.pos_y;
+                                    let license: License = get_license(&mut licenses, &mut balance, &client).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    };
 
     Ok(())
-    // system.run()
 }

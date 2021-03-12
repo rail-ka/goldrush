@@ -19,5 +19,6 @@
 
 cargo build --release --target=x86_64-unknown-linux-musl && \
 docker build -f docker/Dockerfile -t goldrush:0.1 . && \
+docker rmi stor.highloadcup.ru/rally/puma_flyer
 docker tag goldrush:0.1 stor.highloadcup.ru/rally/puma_flyer && \
 docker push stor.highloadcup.ru/rally/puma_flyer

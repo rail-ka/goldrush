@@ -8,6 +8,7 @@ use std::{
     // fmt::{Display, Formatter},
     // collections::BTreeMap,
 };
+use std::cmp::Ordering;
 // use num_traits::{FromPrimitive};
 
 // #[derive(PartialEq, Clone, Copy, Serialize, Deserialize, Debug)]
@@ -64,7 +65,7 @@ pub type Wallet = Vec<u64>;
 // min 0
 pub type Amount = u64;
 
-#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct License {
     pub id: u64,
@@ -72,9 +73,31 @@ pub struct License {
     pub dig_used: Amount,
 }
 
+impl License {
+    pub fn dig_count(&self) -> u64 {
+        self.dig_allowed - self.dig_used
+    }
+}
+
+impl PartialOrd for License {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let s = self.dig_count();
+        let o = other.dig_count();
+        s.partial_cmp(&o)
+    }
+}
+
+impl Ord for License {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let s = self.dig_allowed - self.dig_used;
+        let o = other.dig_allowed - other.dig_used;
+        s.cmp(&o)
+    }
+}
+
 pub type LicenseList = Vec<License>;
 
-#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 // #[derive(Message)]
 // #[rtype(result = "usize")]
@@ -85,10 +108,22 @@ pub struct Area {
     pub size_y: u64, // min 1
 }
 
-#[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 pub struct Report {
     pub area: Area,
     pub amount: Amount,
+}
+
+impl PartialOrd for Report {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.amount.partial_cmp(&other.amount)
+    }
+}
+
+impl Ord for Report {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.amount.cmp(&other.amount)
+    }
 }
 
 #[derive(PartialEq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
