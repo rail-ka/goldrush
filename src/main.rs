@@ -36,6 +36,9 @@ use tokio::time::Duration;
 use hyper::client::HttpConnector;
 use hyper::Client;
 use std::collections::{BinaryHeap, binary_heap::PeekMut};
+use std::sync::Arc;
+// use parking_lot::{RwLock};
+use tokio::sync::RwLock;
 // use hyper_timeout::TimeoutConnector;
 // use bitvec::prelude::*;
 // use chrono::{Utc, DateTime};
@@ -122,12 +125,44 @@ const VARIANTS: [usize; 5] = [5, 10, 50, 100, 500];
 //     client
 // }
 
-#[derive(PartialEq, Clone, Default, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize, Debug)]
 struct Metric {
     min: u64,
     max: u64,
     sum: u64,
     count: u64,
+}
+
+impl Default for Metric {
+    fn default() -> Self {
+        Metric {
+            min: u64::MAX,
+            max: 0,
+            sum: 0,
+            count: 0,
+        }
+    }
+}
+
+impl Metric {
+    pub fn update(&mut self, value: u64) {
+        self.count += 1;
+        self.sum += value;
+        if value > self.max {
+            self.max = value;
+        }
+        if value < self.min {
+            self.min = value;
+        }
+    }
+
+    pub fn avg(&self) -> f64 {
+        if self.count > 0 {
+            (self.sum as f64) / (self.count as f64)
+        } else {
+            0f64
+        }
+    }
 }
 
 fn create_client() -> Client<HttpConnector> {
@@ -156,7 +191,7 @@ fn client_builder(timeout_millis: u64) -> reqwest::Client {
         .pool_idle_timeout(Duration::from_secs(2))
         .tcp_nodelay(true)
         .build()
-        .unwrap();
+        .expect("client builder error");
     client
 }
 
@@ -195,7 +230,7 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
 
     let start = Instant::now();
     // min, max, sum, count
-    let mut time_explore: (u64, u64, u64, u64) = (100_000, 0, 0, 0);
+    let mut time_explore: Metric = Metric::default();
 
     let fx_builder: FxHashMapBuilder = FxHashMapBuilder::default();
 
@@ -215,12 +250,7 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
 
     let mut amount_map: FxHashMap<u64, u64> = FxHashMap::with_capacity_and_hasher(14000, fx_builder.clone());
 
-    let mut amount_metric = Metric {
-        min: u64::MAX,
-        max: 0,
-        sum: 0,
-        count: 0,
-    };
+    let mut amount_metric = Metric::default();
 
     let mut extremes_count = 0;
 
@@ -253,18 +283,7 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
 
             let duration = time.elapsed();
             let millis = duration.as_micros() as u64;
-            let min = &mut time_explore.0;
-            let max = &mut time_explore.1;
-            let sum = &mut time_explore.2;
-            let count = &mut time_explore.3;
-            *count = *count + 1;
-            *sum = *sum + millis;
-            if millis > *max {
-                *max = millis;
-            }
-            if millis < *min {
-                *min = millis;
-            }
+            time_explore.update(millis);
 
             match res {
                 Ok(report) => {
@@ -287,15 +306,10 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
                             }
                         }
 
-                        let min = &mut amount_metric.min;
-                        let max = &mut amount_metric.max;
-                        let sum = &mut amount_metric.sum;
-                        let count = &mut amount_metric.count;
-
                         if level == 0 {
                             // экстремумы - те, которые в 5 раз больше минимального значения
                             // FIXME: const
-                            if amount > (*min * 5) {
+                            if amount > (amount_metric.min * 5) {
                                 extremes_count += 1;
                                 // TODO: стоит туда отправлять только экстремумы?
                                 reports.push(report);
@@ -309,15 +323,7 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
                             reports.push(report);
                         }
 
-
-                        *count = *count + 1;
-                        *sum = *sum + amount;
-                        if amount > *max {
-                            *max = amount;
-                        }
-                        if amount < *min {
-                            *min = amount;
-                        }
+                        amount_metric.update(amount);
 
                         // if store.licences.len() == 0 {
                         //     let wallet = vec![];
@@ -356,13 +362,13 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
             println!("areas_without_gold: {}", areas_without_gold);
         }
 
-        if time_explore.3 > 0 {
-            println!("explore min: {} max: {} avg: {}", time_explore.0, time_explore.1, (time_explore.2 / time_explore.3));
+        if time_explore.count > 0 {
+            println!("explore min: {} max: {} avg: {}", time_explore.min, time_explore.max, time_explore.avg());
         }
 
         // array_extremes_count - число полей с большим числом сундуков
         if amount_metric.count > 0 && level != 2 {
-            println!("area_amounts_min: {} area_max: {} area_amounts_avg: {} array_extremes_count (> min*5): {}", amount_metric.min, amount_metric.max, (amount_metric.sum / amount_metric.count), extremes_count);
+            println!("area_amounts_min: {} area_max: {} area_amounts_avg: {} array_extremes_count (> min*5): {}", amount_metric.min, amount_metric.max, amount_metric.avg(), extremes_count);
 
             for (amount_in_area, areas_count) in amount_map.iter() {
                 println!("amount_in_area: {} areas_count: {}", amount_in_area, areas_count);
@@ -383,43 +389,51 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
     Ok(reports)
 }
 
-async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, client: &reqwest::Client) -> Option<License> {
+async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, client: &reqwest::Client, iter: usize) -> Option<(License, bool)> {
     if licenses.is_empty() {
         if balance.balance == 0 {
             let license = pull_licenses3(&client, &Vec::new()).await;
-            if let Ok(license) = license {
-                licenses.push(license);
-                // TODO: push is clone???
-                Some(license)
-            } else {
-                None
-                // TODO: error
-                // get_license(licenses, balance, client).await
+            match license {
+                Ok(license) => {
+                    licenses.push(license);
+                    // TODO: push is clone???
+                    Some((license, true))
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    None
+                }
             }
         } else {
             // FIXME: const value 1 for license amount
-            let coin = balance.wallet.pop().unwrap_or(0);
-            balance.balance -= 1;
-            let license = pull_licenses3(&client, &vec![coin]).await;
-            if let Ok(license) = license {
-                licenses.push(license);
-                // TODO: push is clone???
-                Some(license)
-            } else {
-                None
-                // TODO: error
-                // get_license(licenses, balance, client).await
+            let mut coins: Vec<u64> = Vec::with_capacity(iter);
+            for _ in 0..iter {
+                let coin = balance.wallet.pop().unwrap_or(0);
+                coins.push(coin);
+                balance.balance -= 1;
+            }
+            let license = pull_licenses3(&client, &coins).await;
+            match license {
+                Ok(license) => {
+                    licenses.push(license);
+                    // TODO: push is clone???
+                    Some((license, true))
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    None
+                }
             }
         }
     } else {
-        let license = licenses.peek_mut().unwrap();
+        let license = licenses.peek_mut().expect("licenses is empty");
         if license.dig_count() == 0 {
             PeekMut::<'_, models::License>::pop(license);
             // license.pop();
             // get_license(licenses, balance, client).await
             None
         } else {
-            Some(PeekMut::<'_, models::License>::pop(license))
+            Some((PeekMut::<'_, models::License>::pop(license), false))
             // license.pop()
         }
     }
@@ -528,8 +542,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 balance: 0,
                 wallet: Vec::with_capacity(500),
             };
-            let client = client_builder(20);
-            let empty_wallet: Wallet = vec![];
+            let client = client_builder(100);
+            // let empty_wallet: Wallet = vec![];
+
+            // let mut license_time = Arc::new(RwLock::new(Metric::default()));
+            let mut license_time = Arc::new(tokio::sync::RwLock::new(Metric::default()));
+            let mut dig_time = Arc::new(RwLock::new(Metric::default()));
+            let mut cash_time = Arc::new(RwLock::new(Metric::default()));
+
+            let mut license_count = Arc::new(RwLock::new(Metric::default()));
+            let mut cash_count = Arc::new(RwLock::new(Metric::default()));
+
+            let lt1 = license_time.clone();
+            let dt1 = dig_time.clone();
+            let ct1 = cash_time.clone();
+            let lc1 = license_count.clone();
+            let cc1 = cash_count.clone();
+
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60));
+                let mut interval_iter = 0;
+
+                loop {
+                    interval.tick().await;
+                    println!("interval_iter: {}", interval_iter);
+                    let ltr = lt1.read().await;
+                    // let ltr = lt1.read();
+                    println!(
+                        "license_time min: {} max: {} sum: {} count: {} avg: {}",
+                        ltr.min,
+                        ltr.max,
+                        ltr.sum,
+                        ltr.count,
+                        ltr.avg(),
+                    );
+
+                    let dtr = dt1.read().await;
+                    println!(
+                        "dig_time min: {} max: {} sum: {} count: {} avg: {}",
+                        dtr.min,
+                        dtr.max,
+                        dtr.sum,
+                        dtr.count,
+                        dtr.avg(),
+                    );
+
+                    let ctr = ct1.read().await;
+                    println!(
+                        "cash_time min: {} max: {} sum: {} count: {} avg: {}",
+                        ctr.min,
+                        ctr.max,
+                        ctr.sum,
+                        ctr.count,
+                        ctr.avg(),
+                    );
+
+                    let lcr = lc1.read().await;
+                    println!(
+                        "license_count min: {} max: {} sum: {} count: {} avg: {}",
+                        lcr.min,
+                        lcr.max,
+                        lcr.sum,
+                        lcr.count,
+                        lcr.avg(),
+                    );
+
+                    let ccr = cc1.read().await;
+                    println!(
+                        "cash_count min: {} max: {} sum: {} count: {} avg: {}",
+                        ccr.min,
+                        ccr.max,
+                        ccr.sum,
+                        ccr.count,
+                        ccr.avg(),
+                    );
+                    interval_iter += 1;
+                }
+            });
 
             while let Some(report) = res.pop() {
                 // FIXME: const
@@ -546,6 +635,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     timeout_millis: 10,
                 };
 
+                /*
+                берем 35 точек, делаем поиск по 7 точек. возвращается приоритетная очередь по площадям
+                */
                 let res = run_explore(args, false, 1).await;
                 if let Ok(mut bh) = res {
                     while let Some(report) = bh.pop() {
@@ -564,7 +656,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             timeout_millis: 10,
                         };
 
-                        let res = run_explore(args, true, 2).await;
+                        let res = run_explore(args, false, 2).await;
                         if let Ok(mut res) = res {
                             // тут уже либо есть либо нет
                             let h = res.peek();
@@ -572,25 +664,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if report.amount > 0 {
                                     let x = report.area.pos_x;
                                     let y = report.area.pos_y;
-                                    let mut license: Option<License> = get_license(&mut licenses, &mut balance, &client).await;
-                                    for _ in 0..9 {
-                                        match license {
-                                            Some(license) => {
+
+                                    let time = Instant::now();
+
+                                    let mut res: Option<(License, bool)> = get_license(&mut licenses, &mut balance, &client, 0).await;
+                                    for i in 0..100 {
+                                        match res {
+                                            Some(_) => {
                                                 break;
                                             }
                                             None => {
-                                                license = get_license(&mut licenses, &mut balance, &client).await;
+                                                res = get_license(&mut licenses, &mut balance, &client, i+1).await;
                                             }
                                         }
                                     }
-                                    let mut license = license.unwrap();
+                                    let res = res.expect("license is None");
+                                    let mut license = res.0;
+                                    // TODO: тут будут считаться и локальные запросы, без запроса на сервер!!!
+                                    if res.1 {
+                                        let millis = time.elapsed().as_millis() as u64;
+                                        let mut ltw = license_time.write().await;
+                                        // let mut ltw = license_time.write();
+                                        ltw.update(millis);
+                                        let mut lcw = license_count.write().await;
+                                        lcw.update(license.dig_allowed);
+                                    }
+
                                     let dig: Dig = Dig {
                                         license_id: license.id,
-                                        pos_x: report.pos_x,
-                                        pos_y: report.pos_y,
-                                        depth: 1, // TODO: ???
+                                        pos_x: x,
+                                        pos_y: y,
+                                        depth: 10, // TODO: ???
                                     };
-                                    let res = dig3(&client, dig).await;
+                                    let time = Instant::now();
+                                    let res = dig3(&client, &dig).await;
+                                    let millis = time.elapsed().as_millis() as u64;
+                                    let mut dtw = dig_time.write().await;
+                                    dtw.update(millis);
+                                    if let Ok(res) = res {
+                                        for t in res {
+                                            let time = Instant::now();
+                                            if let Ok(mut wallet) = cash3(&client, &t).await {
+                                                let millis = time.elapsed().as_millis() as u64;
+                                                let count = wallet.len();
+                                                let mut ctw = cash_time.write().await;
+                                                ctw.update(millis);
+                                                balance.balance += count as u64;
+                                                balance.wallet.append(&mut wallet);
+                                                let mut ccw = cash_count.write().await;
+                                                ccw.update(count as u64);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
