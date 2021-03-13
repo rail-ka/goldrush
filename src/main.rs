@@ -383,15 +383,18 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
     Ok(reports)
 }
 
-async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, client: &reqwest::Client) -> License {
+async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, client: &reqwest::Client) -> Option<License> {
     if licenses.is_empty() {
         if balance.balance == 0 {
             let license = pull_licenses3(&client, &Vec::new()).await;
             if let Ok(license) = license {
                 licenses.push(license);
-                license
+                // TODO: push is clone???
+                Some(license)
             } else {
-                get_license(licenses, balance, client).await
+                None
+                // TODO: error
+                // get_license(licenses, balance, client).await
             }
         } else {
             // FIXME: const value 1 for license amount
@@ -400,9 +403,12 @@ async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, 
             let license = pull_licenses3(&client, &vec![coin]).await;
             if let Ok(license) = license {
                 licenses.push(license);
-                license
+                // TODO: push is clone???
+                Some(license)
             } else {
-                get_license(licenses, balance, client).await
+                None
+                // TODO: error
+                // get_license(licenses, balance, client).await
             }
         }
     } else {
@@ -410,9 +416,10 @@ async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, 
         if license.dig_count() == 0 {
             PeekMut::<'_, models::License>::pop(license);
             // license.pop();
-            get_license(licenses, balance, client).await
+            // get_license(licenses, balance, client).await
+            None
         } else {
-            PeekMut::<'_, models::License>::pop(license)
+            Some(PeekMut::<'_, models::License>::pop(license))
             // license.pop()
         }
     }
@@ -565,7 +572,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if report.amount > 0 {
                                     let x = report.area.pos_x;
                                     let y = report.area.pos_y;
-                                    let license: License = get_license(&mut licenses, &mut balance, &client).await;
+                                    let mut license: Option<License> = get_license(&mut licenses, &mut balance, &client).await;
+                                    for _ in 0..9 {
+                                        match license {
+                                            Some(license) => {
+                                                break;
+                                            }
+                                            None => {
+                                                license = get_license(&mut licenses, &mut balance, &client).await;
+                                            }
+                                        }
+                                    }
+                                    let mut license = license.unwrap();
+                                    let dig: Dig = Dig {
+                                        license_id: license.id,
+                                        pos_x: report.pos_x,
+                                        pos_y: report.pos_y,
+                                        depth: 1, // TODO: ???
+                                    };
+                                    let res = dig3(&client, dig).await;
                                 }
                             }
                         }
