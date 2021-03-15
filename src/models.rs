@@ -105,18 +105,49 @@ pub type LicenseList = Vec<License>;
 
 pub type LicenseSet = Arc<ArrayQueue<License>>;
 
-pub fn push_back(set: &LicenseSet, license: License) {
+pub fn license_push_back(set: &LicenseSet, license: License) {
     if let Err(l) = set.push(license) {
         eprintln!("license queue is full! {}", license.id);
     }
 }
 
-pub async fn pull(set: &LicenseSet, client: &Client, balance: &BalanceArc, errors: &ErrMapArc, sum: usize) -> License {
-    let get_license = || async {
+pub async fn get_license(client: &Client, balance: &BalanceArc, errors: &ErrMapArc, sum: usize) -> License {
+    loop {
+        let mut balance = balance.lock().await;
+        let wallet: Vec<u64> = {
+            if (balance.balance == 0) || (balance.balance < sum as u64) {
+                vec![]
+            } else {
+                let mut coins: Vec<u64> = Vec::with_capacity(sum);
+                for _ in 0..sum {
+                    let coin = balance.wallet.pop().unwrap_or_else(|| {
+                        eprintln!("wallet empty but balance != 0");
+                        0
+                    });
+                    coins.push(coin);
+                    balance.balance -= 1;
+                }
+                coins
+            }
+        };
+        match pull_licenses3(client, &wallet, false, false).await {
+            Ok(license) => {
+                return license;
+            }
+            Err(e) => {
+                // TODO: if 402 get licenses
+                err_add(&errors, e).await; // TODO: можно не ждать, spawn current thread
+            }
+        }
+    }
+}
+
+pub async fn license_pull(set: &LicenseSet, client: &Client, balance: &BalanceArc, errors: &ErrMapArc, sum: usize) -> License {
+/*    let get_license = || async {
         loop {
             let mut balance = balance.lock().await;
             let wallet: Vec<u64> = {
-                if balance.balance == 0 {
+                if (balance.balance == 0) || (balance.balance < sum as u64) {
                     vec![]
                 } else {
                     let mut coins: Vec<u64> = Vec::with_capacity(sum);
@@ -141,12 +172,12 @@ pub async fn pull(set: &LicenseSet, client: &Client, balance: &BalanceArc, error
                 }
             }
         }
-    };
+    };*/
     match set.pop() {
         Some(license) => {
             if license.dig_count() == 0 {
                 // TODO: request
-                let l: License = get_license().await;
+                let l: License = get_license(client, balance, errors, sum).await;
                 l
             } else {
                 // ...
@@ -155,7 +186,7 @@ pub async fn pull(set: &LicenseSet, client: &Client, balance: &BalanceArc, error
         }
         None => {
             // TODO: request
-            let l: License = get_license().await;
+            let l: License = get_license(client, balance, errors, sum).await;
             l
         }
     }
