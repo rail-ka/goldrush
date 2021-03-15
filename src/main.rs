@@ -200,11 +200,7 @@ impl Metric {
 // }
 
 fn client_builder(timeout_millis: u64) -> reqwest::Client {
-    // let mut headers = reqwest::header::HeaderMap::new();
-    // headers.insert("content-type", reqwest::header::HeaderValue::from_static("application/json"));
-
     let client = reqwest::ClientBuilder::new()
-        // .default_headers(headers)
         // .connect_timeout(Duration::from_millis(3))
         .timeout(Duration::from_millis(timeout_millis)) // TODO: for explore large areas нужно устанавливать большие лимиты
         .pool_idle_timeout(Duration::from_secs(2))
@@ -407,50 +403,7 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
 
     Ok(reports)
 }
-/*
-async fn get_license(licenses: &mut Arc<Mutex<BinaryHeap<License>>>, balance: &mut Balance, client: &reqwest::Client, iter: usize) -> Result<bool, u16> {
-    let mut licenses = licenses.lock().await;
-    println!("licenses len: {}", licenses.len());
-    if licenses.is_empty() { // TODO
-        if balance.balance == 0 {
-            println!("iter: {}", iter);
-            let license = pull_licenses3(&client, &Vec::new(), false, false).await;
-            license.map(|license| {
-                licenses.push(license);
-            });
-            Err(1)
-        } else {
-            // FIXME: const value 1 for license amount
-            let mut coins: Vec<u64> = Vec::with_capacity(iter);
-            for _ in 0..iter {
-                let coin = balance.wallet.pop().unwrap_or(0);
-                coins.push(coin);
-                balance.balance -= 1;
-            }
-            let is_log = if iter < 3 { println!("iter: {}", iter); true } else { false };
-            let license = pull_licenses3(&client, &coins, is_log, is_log).await;
-            license.map(|license| {
-                licenses.push(license);
-                // TODO: push is clone???
-            });
-            Err(1)
-        }
-    } else {
-        let license = licenses.peek_mut().expect("licenses is empty");
-        if license.dig_count() == 0 {
-            PeekMut::<'_, models::License>::pop(license);
-            // license.pop();
-            // get_license(licenses, balance, client).await
-            // Err(1)
-        } else {
-            // Ok((PeekMut::<'_, models::License>::pop(license), false))
-            // license.pop()
-            // Ok((license, false))
-        }
-        Ok(true)
-    }
-}
-*/
+
 pub type ErrMapArc = Arc<RwLock<FxHashMap<u16, u32>>>;
 
 pub async fn err_add(map: &ErrMapArc, err: u16) {
@@ -560,14 +513,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let le1 = license_errors.clone();
 
     rt.spawn(async move {
-        // println!("licenses get started");
-        let client = reqwest::ClientBuilder::new()
-            // .connect_timeout(Duration::from_millis(3))
-            .timeout(Duration::from_millis(150))
-            // .pool_idle_timeout(Duration::from_secs(2))
-            // .tcp_nodelay(true)
-            .build()
-            .expect("client builder error");
+        println!("licenses free 3 get started");
+        let client = client_builder(15);
 
         // get balance
         let balance = balance3(&client).await;
@@ -589,6 +536,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
+        // get licenses
+        if let Ok(l) = licenses3(&client).await {
+            println!("licenses: {:?}", l);
+        }
     });
 
     let mut license_set2 = license_set.clone();
@@ -596,23 +548,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let le1 = license_errors.clone();
 
     rt.spawn(async move {
-        let client = client_builder(100);
+        let client = client_builder(15);
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.tick().await;
 
         loop {
             interval.tick().await;
             if license_set2.len() < 5 {
-                let license = get_license(&client, &balance2, &le1, 1).await;
-                license_set2.push(license);
-                let license = get_license(&client, &balance2, &le1, 1).await;
-                license_set2.push(license);
-                let license = get_license(&client, &balance2, &le1, 1).await;
-                license_set2.push(license);
+                // println!("licenses get 3");
+                // TODO: timeout 15ms
+                for _ in 0..3 {
+                    let license = get_license(&client, &balance2, &le1, 1).await;
+                    license_set2.push(license);
+                }
+
 
             }
         }
-
     });
 
     let (cash_sender, mut cash_receiver) = tokio::sync::mpsc::channel::<Treasure>(1000);
@@ -620,23 +572,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let balance2 = balance.clone();
 
     rt.spawn(async move {
-        let mut cash_time = Metric::default();
-        let mut cash_count = Metric::default();
+        let cash_time = Arc::new(RwLock::new(Metric::default()));
+        let cash_count = Arc::new(RwLock::new(Metric::default()));
         let mut cash_errors: FxHashMap<u16, u32> = FxHashMap::with_capacity_and_hasher(100, fx_builder.clone());
-        let client = client_builder(100);
+        let client = client_builder(20);
+
+        let ct = cash_time.clone();
+        let cc = cash_count.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+
+                let ct = ct.read().await;
+                println!(
+                    "cash_time min: {} max: {} sum: {} count: {} avg: {}",
+                    ct.min,
+                    ct.max,
+                    ct.sum,
+                    ct.count,
+                    ct.avg(),
+                );
+
+                let cc = cc.read().await;
+                println!(
+                    "cash_count min: {} max: {} sum: {} count: {} avg: {}",
+                    cc.min,
+                    cc.max,
+                    cc.sum,
+                    cc.count,
+                    cc.avg(),
+                );
+            }
+        });
+
+        let ct = cash_time.clone();
+        let cc = cash_count.clone();
 
         while let Some(t) = cash_receiver.recv().await {
+            // println!("treasure cash");
             let time = Instant::now();
             match cash3(&client, &t).await {
                 Ok(mut wallet) => {
                     let millis = time.elapsed().as_millis() as u64;
                     let count = wallet.len();
-                    cash_time.update(millis);
+                    let mut ct = ct.write().await;
+                    ct.update(millis);
                     // TODO
                     let mut balance = balance2.lock().await;
                     balance.balance += count as u64;
                     balance.wallet.append(&mut wallet);
-                    cash_count.update(count as u64);
+                    let mut cc = cc.write().await;
+                    cc.update(count as u64);
                 }
                 Err(e) => {
                     match cash_errors.get_mut(&e) {
@@ -652,58 +640,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let (explore35_sender, mut explore35_receiver) = tokio::sync::mpsc::channel::<Treasure>(1000);
+    let (explore35_sender, mut explore35_receiver) = tokio::sync::mpsc::channel::<BinaryHeap<Report>>(1000);
 
-    let res = rt.block_on(async {
-        println!("explore started");
-        // area_divisor: 1, 2, 4, 5, 10, 20
-        // FIXME: const
-        let args = ExploreArgs {
-            step_x: 35,
-            step_y: 1,
-            size_x: 3500,
-            size_y: 3500,
-            cpus: 1,
-            cpu: 0,
-            area_divisor: 20,
-            start_x: 0,
-            start_y: 0,
-            timeout_millis: 10,
-        };
+    rt.spawn(async move {
+        while let Some(mut res) = explore35_receiver.recv().await {
+            // println!("explore 35 start");
+            let balance = balance.clone();
+            let mut license_set2 = license_set.clone();
+            let le1 = license_errors.clone();
 
-        run_explore(ExploreArgs { cpu: 0, ..args }, false, 0).await
+            let tx = cash_sender.clone();
 
-        // for i in 0..1  {
-        //     run_explore(ExploreArgs { cpu: i, ..args }).await;
-        // }
 
-        // let f1 = tokio::spawn(f1);
-        // let f2 = tokio::spawn(f2);
-        // tokio::join!(f1, f2);
-    });
-
-    rt.block_on(async {
-
-    });
-
-    if let Ok(mut res) = res {
-        let balance = balance.clone();
-        let mut license_set2 = license_set.clone();
-        let le1 = license_errors.clone();
-
-        let tx = cash_sender.clone();
-
-        rt.block_on(async {
-            let client = client_builder(100);
+            let client = client_builder(10);
             // let empty_wallet: Wallet = vec![];
 
             // let mut license_time = Arc::new(RwLock::new(Metric::default()));
             let license_time = Arc::new(tokio::sync::RwLock::new(Metric::default()));
             let dig_time = Arc::new(RwLock::new(Metric::default()));
-            let cash_time = Arc::new(RwLock::new(Metric::default()));
+            // let cash_time = Arc::new(RwLock::new(Metric::default()));
 
             let license_count = Arc::new(RwLock::new(Metric::default()));
-            let cash_count = Arc::new(RwLock::new(Metric::default()));
+            // let cash_count = Arc::new(RwLock::new(Metric::default()));
 
             let fx_builder: FxHashMapBuilder = FxHashMapBuilder::default();
 
@@ -712,9 +670,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let lt1 = license_time.clone();
             let dt1 = dig_time.clone();
-            let ct1 = cash_time.clone();
+            // let ct1 = cash_time.clone();
             let lc1 = license_count.clone();
-            let cc1 = cash_count.clone();
+            // let cc1 = cash_count.clone();
             let de1 = dig_errors.clone();
             let ce1 = cash_errors.clone();
 
@@ -726,7 +684,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     interval.tick().await;
                     println!("interval_iter: {}", interval_iter);
                     let ltr = lt1.read().await;
-                    // let ltr = lt1.read();
                     println!(
                         "license_time min: {} max: {} sum: {} count: {} avg: {}",
                         ltr.min,
@@ -746,15 +703,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         dtr.avg(),
                     );
 
-                    let ctr = ct1.read().await;
-                    println!(
-                        "cash_time min: {} max: {} sum: {} count: {} avg: {}",
-                        ctr.min,
-                        ctr.max,
-                        ctr.sum,
-                        ctr.count,
-                        ctr.avg(),
-                    );
+                    // let ctr = ct1.read().await;
+                    // println!(
+                    //     "cash_time min: {} max: {} sum: {} count: {} avg: {}",
+                    //     ctr.min,
+                    //     ctr.max,
+                    //     ctr.sum,
+                    //     ctr.count,
+                    //     ctr.avg(),
+                    // );
 
                     let lcr = lc1.read().await;
                     println!(
@@ -766,15 +723,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         lcr.avg(),
                     );
 
-                    let ccr = cc1.read().await;
-                    println!(
-                        "cash_count min: {} max: {} sum: {} count: {} avg: {}",
-                        ccr.min,
-                        ccr.max,
-                        ccr.sum,
-                        ccr.count,
-                        ccr.avg(),
-                    );
+                    // let ccr = cc1.read().await;
+                    // println!(
+                    //     "cash_count min: {} max: {} sum: {} count: {} avg: {}",
+                    //     ccr.min,
+                    //     ccr.max,
+                    //     ccr.sum,
+                    //     ccr.count,
+                    //     ccr.avg(),
+                    // );
 
                     let ler = le1.read().await;
                     for (error_code, count) in ler.iter() {
@@ -877,16 +834,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         license.dig_used += 1;
 
                                         if license.dig_count() != 0 {
-                                            // println!("{:?}", license);
                                             license_set2.push(license).expect("license is full");
                                         }
 
-                                        // if let Ok(l) = licenses3(&client).await {
-                                        //     println!("{:?}", l);
-                                        // }
-
                                         let millis = time.elapsed().as_millis() as u64;
-                                        let mut dtw = dig_time.write().await; // TODO: dt1?
+                                        let mut dtw = dig_time.write().await;
                                         dtw.update(millis);
                                         match res {
                                             Ok(res) => {
@@ -895,35 +847,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                                 for t in res {
                                                     tx.send(t).await.map_err(|e| {
-                                                        eprintln!("{:?}", e);
+                                                        eprintln!("{}", e);
                                                     });
-                                                    // let time = Instant::now();
-                                                    /*match cash3(&client, &t).await {
-                                                        Ok(mut wallet) => {
-                                                            let millis = time.elapsed().as_millis() as u64;
-                                                            let count = wallet.len();
-                                                            let mut ctw = cash_time.write().await;
-                                                            ctw.update(millis);
-                                                            // TODO
-                                                            let mut balance = balance.lock().await;
-                                                            balance.balance += count as u64;
-                                                            balance.wallet.append(&mut wallet);
-                                                            let mut ccw = cash_count.write().await;
-
-                                                            ccw.update(count as u64);
-                                                        }
-                                                        Err(e) => {
-                                                            let mut w = cash_errors.write().await;
-                                                            match w.get_mut(&e) {
-                                                                Some(count) => {
-                                                                    *count += 1;
-                                                                }
-                                                                None => {
-                                                                    w.insert(e, 1);
-                                                                }
-                                                            }
-                                                        }
-                                                    }*/
                                                 }
                                             }
                                             Err(e) => {
@@ -945,8 +870,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-        });
-    };
+
+        }
+    });
+
+    let explore35_sender2 = explore35_sender.clone();
+    rt.block_on(async move {
+        println!("explore started");
+        let mut cpu = 0;
+        let cpus = 250;
+        loop {
+            // один проход отдает 5 тыс монет
+            // тратися 50 секунд
+            // тут максимум 50 тыс монет получится((((
+            // FIXME: const
+            let args = ExploreArgs {
+                step_x: 35,
+                step_y: 1,
+                size_x: 3500,
+                size_y: 3500,
+                cpus,
+                cpu,
+                // area_divisor: 1, 2, 4, 5, 10, 20
+                area_divisor: 1,
+                start_x: 0,
+                start_y: 0,
+                timeout_millis: 10,
+            };
+
+            if let Ok(mut res) = run_explore(args, false, 0).await {
+                cpu += 1;
+                explore35_sender2.send(res).await.map_err(|e| {
+                    eprintln!("{}", e);
+                });
+            }
+        }
+
+        // for i in 0..1  {
+        //     run_explore(ExploreArgs { cpu: i, ..args }).await;
+        // }
+
+        // let f1 = tokio::spawn(f1);
+        // let f2 = tokio::spawn(f2);
+        // tokio::join!(f1, f2);
+    });
 
     Ok(())
 }

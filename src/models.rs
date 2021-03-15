@@ -176,7 +176,6 @@ pub async fn license_pull(set: &LicenseSet, client: &Client, balance: &BalanceAr
     match set.pop() {
         Some(license) => {
             if license.dig_count() == 0 {
-                // TODO: request
                 let l: License = get_license(client, balance, errors, sum).await;
                 l
             } else {
@@ -185,7 +184,6 @@ pub async fn license_pull(set: &LicenseSet, client: &Client, balance: &BalanceAr
             }
         }
         None => {
-            // TODO: request
             let l: License = get_license(client, balance, errors, sum).await;
             l
         }

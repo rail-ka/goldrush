@@ -13,6 +13,8 @@
 
 10 минут = 60 * 10 = 600 секунд = 600_000 миллисекунд
 
+1, 2, 4, 5, 7, 10, 14, 20, 25, 28, 35, 50, 70,  100,  125,  140,  175,  250,  350,  500,  700,  875, 1 750, 3 500
+
 1/2 area
 cpus: 1 size_x: 50
 end: 376_157
@@ -33,7 +35,7 @@ error_code: 1002, count: 33
 1/20 area
 size_x: 35 size_y: 1 cpus: 1 area_divisor: 20
 end: 50_972
-areas_count: 17_500 areas_without_gold: 4314, profit: 4 (24%)
+areas_count: 17_500 areas_without_gold: 4314cc
 explore min: 1395 max: 32_649 avg: 2911
 amounts min: 1 max: 8 avg: 1 extremes_count: 54
 item: 1 count: 6043
@@ -50,7 +52,6 @@ Metric { min: 1, max: 8, sum: 24_169, count: 13_068 }
 
 // при step = 5 areas_without_gold варьируется от 1 до 2х
 // небходимо будет проверить 30 точек
-
 cpu: 0 step_x: 5 step_y: 1 cpus: 1 area_divisor: 1
 size_x: 35 size_y: 1
 end: 12
@@ -60,20 +61,19 @@ area_amounts_min: 1 area_max: 2
 amount_in_area: 1 areas_count: 4
 amount_in_area: 2 areas_count: 2
 
-// при step = 5 areas_without_gold варьируется от 1 до 2х
+// при step = 7 areas_without_gold варьируется от 1 до 2х
 // небходимо будет проверить 28 точек
-
 cpu: 0 step_x: 7 step_y: 1 cpus: 1 area_divisor: 1
 size_x: 35 size_y: 1
 end: 13
-areas_without_gold: 1
+areas_without_gold: 1, profit: 5 (20%)
 explore min: 1984 max: 4744 avg: 2650
 area_amounts_min: 1 area_max: 3
 amount_in_area: 1 areas_count: 2
 amount_in_area: 3 areas_count: 2
 
 cpu: 0 step_x: 1 step_y: 1 cpus: 1 area_divisor: 1
-size_x: 7 size_y: 1 areas_count: 7 
+size_x: 7 size_y: 1 areas_count: 7
 end: 12
 explore min: 1620 max: 1948 avg: 1798
 exists in point: 3
