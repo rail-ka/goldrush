@@ -9,6 +9,12 @@ use std::{
     // collections::BTreeMap,
 };
 use std::cmp::Ordering;
+use crossbeam::queue::ArrayQueue;
+use std::sync::Arc;
+use crate::requests::pull_licenses3;
+use reqwest::Client;
+use rustc_hash::FxHashMap;
+use crate::{ErrMapArc, BalanceArc, err_add};
 // use num_traits::{FromPrimitive};
 
 // #[derive(PartialEq, Clone, Copy, Serialize, Deserialize, Debug)]
@@ -96,6 +102,64 @@ impl Ord for License {
 }
 
 pub type LicenseList = Vec<License>;
+
+pub type LicenseSet = Arc<ArrayQueue<License>>;
+
+pub fn push_back(set: &LicenseSet, license: License) {
+    if let Err(l) = set.push(license) {
+        eprintln!("license queue is full! {}", license.id);
+    }
+}
+
+pub async fn pull(set: &LicenseSet, client: &Client, balance: &BalanceArc, errors: &ErrMapArc, sum: usize) -> License {
+    let get_license = || async {
+        loop {
+            let mut balance = balance.lock().await;
+            let wallet: Vec<u64> = {
+                if balance.balance == 0 {
+                    vec![]
+                } else {
+                    let mut coins: Vec<u64> = Vec::with_capacity(sum);
+                    for _ in 0..sum {
+                        let coin = balance.wallet.pop().unwrap_or_else(|| {
+                            eprintln!("wallet empty but balance != 0");
+                            0
+                        });
+                        coins.push(coin);
+                        balance.balance -= 1;
+                    }
+                    coins
+                }
+            };
+            match pull_licenses3(client, &wallet, false, false).await {
+                Ok(license) => {
+                    return license;
+                }
+                Err(e) => {
+                    // TODO: if 402 get licenses
+                    err_add(&errors, e).await; // TODO: можно не ждать, spawn current thread
+                }
+            }
+        }
+    };
+    match set.pop() {
+        Some(license) => {
+            if license.dig_count() == 0 {
+                // TODO: request
+                let l: License = get_license().await;
+                l
+            } else {
+                // ...
+                license
+            }
+        }
+        None => {
+            // TODO: request
+            let l: License = get_license().await;
+            l
+        }
+    }
+}
 
 #[derive(PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

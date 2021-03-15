@@ -25,7 +25,13 @@
 Нам нужна однопоточная очередь или многопоточная?
 [garro95/priority-queue](https://github.com/garro95/priority-queue) - priority queue with change priority
 [smol-rs/concurrent-queue](https://github.com/smol-rs/concurrent-queue) - concurrent multi-producer multi-consumer queue with get closed for push features
-[crossbeam-queue](https://github.com/crossbeam-rs/crossbeam) - ?
+[crossbeam-queue](https://github.com/crossbeam-rs/crossbeam) - есть разные очереди:
+    1. deque для создания мастер очереди и рабочих очередей для выполнения тасков. (может пригодиться в Funclove)
+    2. AtomicCell - ячейка с возможной атомарностью.
+    3. ArrayQueue & SegQueue - очереди с фиксированной длиной и нет
+    4. channel - mpmc канал
+    5. ShardedLock - как Arc<RwLock>, только чтение быстрее, а запись медленнее
+    
 std::collections::binary_heap
 [min_max_heap](https://github.com/tov/min-max-heap-rs) - min and max value O(1), extremum - O(log n)
 [binary-heap-plus](https://github.com/sekineh/binary-heap-plus-rs) - Enhancement over std::collections::BinaryHeap

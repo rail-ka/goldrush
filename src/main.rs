@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // #[macro_use]
 // extern crate num_derive;
 #[macro_use]
@@ -33,12 +34,13 @@ use crate::requests::*;
 // use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasherDefault;
 use tokio::time::Duration;
-use hyper::client::HttpConnector;
-use hyper::Client;
+// use hyper::client::HttpConnector;
+// use hyper::Client;
 use std::collections::{BinaryHeap, binary_heap::PeekMut};
 use std::sync::Arc;
 // use parking_lot::{RwLock};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
+use crossbeam::queue::ArrayQueue;
 // use hyper_timeout::TimeoutConnector;
 // use bitvec::prelude::*;
 // use chrono::{Utc, DateTime};
@@ -163,22 +165,39 @@ impl Metric {
             0f64
         }
     }
+
+    pub fn print(&self, item: &str) {
+        // let percentile25 = 0;
+        // let median = 0;
+        // let percentile75 = 0;
+        println!(
+            // "{} min: {} max: {} avg: {} 25: {} 50: {}, 75: {}",
+            "{} min: {} max: {} avg: {}",
+            item,
+            self.min,
+            self.max,
+            self.avg(),
+            // percentile25,
+            // median,
+            // percentile75,
+        );
+    }
 }
 
-fn create_client() -> Client<HttpConnector> {
-    let mut http_connector = HttpConnector::new();
-    // let mut connector = TimeoutConnector::new(http_connector);
-    http_connector.set_keepalive(Some(Duration::from_secs(10)));
-    // http_connector.set_connect_timeout(Some(Duration::from_millis(10_000)));
-    http_connector.set_connect_timeout(Some(Duration::from_millis(10)));
-    http_connector.set_reuse_address(true);
-    http_connector.set_nodelay(true);
-
-    let client = hyper::Client::builder()
-        .pool_idle_timeout(Duration::from_secs(10))
-        .build(http_connector);
-    client
-}
+// fn create_client() -> Client<HttpConnector> {
+//     let mut http_connector = HttpConnector::new();
+//     // let mut connector = TimeoutConnector::new(http_connector);
+//     http_connector.set_keepalive(Some(Duration::from_secs(10)));
+//     // http_connector.set_connect_timeout(Some(Duration::from_millis(10_000)));
+//     http_connector.set_connect_timeout(Some(Duration::from_millis(10)));
+//     http_connector.set_reuse_address(true);
+//     http_connector.set_nodelay(true);
+//
+//     let client = hyper::Client::builder()
+//         .pool_idle_timeout(Duration::from_secs(10))
+//         .build(http_connector);
+//     client
+// }
 
 fn client_builder(timeout_millis: u64) -> reqwest::Client {
     // let mut headers = reqwest::header::HeaderMap::new();
@@ -214,8 +233,8 @@ struct ExploreArgs {
 */
 async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<BinaryHeap<Report>, u16> {
     let ExploreArgs {
-        step_x: step_x,
-        step_y: step_y,
+        step_x,
+        step_y,
         size_x,
         size_y,
         cpus,
@@ -266,7 +285,7 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
         let pos_y = start_y + (y_iter * step_y);
         let mut pos_x = start_x;
 
-        'x_iter: while pos_x < (start_x + size_x) {
+        while pos_x < (start_x + size_x) {
             let area: Area = Area {
                 pos_x,
                 pos_y,
@@ -389,21 +408,17 @@ async fn run_explore(args: ExploreArgs, is_log: bool, level: u16) -> Result<Bina
     Ok(reports)
 }
 
-async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, client: &reqwest::Client, iter: usize) -> Option<(License, bool)> {
-    if licenses.is_empty() {
+async fn get_license(licenses: &mut Arc<Mutex<BinaryHeap<License>>>, balance: &mut Balance, client: &reqwest::Client, iter: usize) -> Result<bool, u16> {
+    let mut licenses = licenses.lock().await;
+    println!("licenses len: {}", licenses.len());
+    if licenses.is_empty() { // TODO
         if balance.balance == 0 {
-            let license = pull_licenses3(&client, &Vec::new()).await;
-            match license {
-                Ok(license) => {
-                    licenses.push(license);
-                    // TODO: push is clone???
-                    Some((license, true))
-                }
-                Err(e) => {
-                    eprintln!("{}", e);
-                    None
-                }
-            }
+            println!("iter: {}", iter);
+            let license = pull_licenses3(&client, &Vec::new(), false, false).await;
+            license.map(|license| {
+                licenses.push(license);
+            });
+            Err(1)
         } else {
             // FIXME: const value 1 for license amount
             let mut coins: Vec<u64> = Vec::with_capacity(iter);
@@ -412,18 +427,13 @@ async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, 
                 coins.push(coin);
                 balance.balance -= 1;
             }
-            let license = pull_licenses3(&client, &coins).await;
-            match license {
-                Ok(license) => {
-                    licenses.push(license);
-                    // TODO: push is clone???
-                    Some((license, true))
-                }
-                Err(e) => {
-                    eprintln!("{}", e);
-                    None
-                }
-            }
+            let is_log = if iter < 3 { println!("iter: {}", iter); true } else { false };
+            let license = pull_licenses3(&client, &coins, is_log, is_log).await;
+            license.map(|license| {
+                licenses.push(license);
+                // TODO: push is clone???
+            });
+            Err(1)
         }
     } else {
         let license = licenses.peek_mut().expect("licenses is empty");
@@ -431,13 +441,31 @@ async fn get_license(licenses: &mut BinaryHeap<License>, balance: &mut Balance, 
             PeekMut::<'_, models::License>::pop(license);
             // license.pop();
             // get_license(licenses, balance, client).await
-            None
+            // Err(1)
         } else {
-            Some((PeekMut::<'_, models::License>::pop(license), false))
+            // Ok((PeekMut::<'_, models::License>::pop(license), false))
             // license.pop()
+            // Ok((license, false))
+        }
+        Ok(true)
+    }
+}
+
+pub type ErrMapArc = Arc<RwLock<FxHashMap<u16, u32>>>;
+
+pub async fn err_add(map: &ErrMapArc, err: u16) {
+    let mut w = map.write().await;
+    match w.get_mut(&err) {
+        Some(count) => {
+            *count += 1;
+        }
+        None => {
+            w.insert(err, 1);
         }
     }
 }
+
+pub type BalanceArc = Arc<Mutex<Balance>>;
 
 // #[actix_rt::main]
 // -> std::io::Result<()>
@@ -473,9 +501,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // println!("cpu count: {}", cpus);
     // let cpus = if cpus > 4 { 4 } else { cpus };
 
+    let license_set: LicenseSet = Arc::new(ArrayQueue::new(10));
+
     // let rt = Runtime::new()?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .worker_threads(4)
         .build()?;
 
     rt.block_on(async {
@@ -508,7 +539,158 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let f1 = run_explore(size_x, cpus, 0, area_divisor);
     // let f2 = run_explore(size_x, cpus, 0, area_divisor);
 
+    // for var in std::env::vars() {
+    //     println!("key: {} value: {}", var.0, var.1);
+    // }
+
+    // TODO: какая структура данных должна быть у лицензии?
+    // Arc+Mutex + ??? Vec? FxHashMap? Queue?
+    // Можно брать лицензию из очереди, работать с ней и ложить обратно в очередь. Таким образом очередь будет идти по циклу (по кругу)...
+    let licenses: Arc<Mutex<BinaryHeap<License>>> = Arc::new(Mutex::new(BinaryHeap::with_capacity(10)));
+
+    let cloned_licenses = licenses.clone();
+
+    let mut license_set2 = license_set.clone();
+
+    rt.spawn(async move {
+        println!("licenses get started");
+        let client = reqwest::ClientBuilder::new()
+            // .connect_timeout(Duration::from_millis(3))
+            .timeout(Duration::from_millis(150))
+            // .pool_idle_timeout(Duration::from_secs(2))
+            // .tcp_nodelay(true)
+            .build()
+            .expect("client builder error");
+
+        // get balance
+        let balance = balance3(&client).await;
+        println!("balance: {:?}", balance);
+
+        // get licenses
+        if let Ok(l) = licenses3(&client).await {
+            println!("licenses: {:?}", l);
+        }
+
+        while license_set2.len() < 3 {
+            if let Ok(license) = pull_licenses3(&client, &vec![], false, false).await {
+                license_set2.push(license);
+                println!("congrats! pull license successful");
+            }
+        }
+    });
+
+    let mut license_set = license_set.clone();
+
+    rt.spawn(async move {
+
+        println!("licenses get started");
+        // let client = client_builder(100);
+        let client = reqwest::ClientBuilder::new()
+            // .default_headers(headers)
+            // .connect_timeout(Duration::from_millis(3))
+            .timeout(Duration::from_millis(150))
+            // .pool_idle_timeout(Duration::from_secs(2))
+            // .tcp_nodelay(true)
+            .build()
+            .expect("client builder error");
+
+        // get balance
+        let balance = balance3(&client).await;
+        println!("balance: {:?}", balance);
+
+        // get licenses
+        if let Ok(l) = licenses3(&client).await {
+            println!("licenses: {:?}", l);
+        }
+
+        // pull license
+        match pull_licenses3(&client, &Vec::new(), false, false).await.map_err(|e| {
+            // println!("pull_licenses3 error: {}", e);
+            e
+        }) {
+            Ok(res) => {
+                println!("congrats! first pull license res: {:?}", res);
+            }
+            Err(_) => {
+                // println!("pull license err: {}", e);
+            }
+        }
+
+        let mut licences_count = 0; // up to 3
+        let mut licenses_errors_count = 0;
+
+        let empty_vec: Wallet = Vec::new();
+
+        let mut pull_licenses_time = Metric::default();
+
+        // pull 3 licenses
+        loop {
+            if licences_count > 3 {
+                break;
+            }
+            if (licenses_errors_count % 10) == 0 {
+                println!("licenses_errors_count: {}", licenses_errors_count);
+            }
+
+            let start = Instant::now();
+
+            let res = pull_licenses3(&client, &empty_vec, false, false).await.map_err(|e| {
+                // println!("pull_licenses3 error: {}", e);
+                e
+            });
+
+            let time = start.elapsed();
+
+            pull_licenses_time.update(time.as_millis() as u64);
+
+            match res {
+                Ok(l) => {
+                    // println!("license: {:?}", l);
+                    let mut lw = cloned_licenses.lock().await;
+                    lw.push(l);
+                    licences_count += 1;
+                    // break;
+                }
+                Err(e) => {
+                    if e == 502 {
+                        licenses_errors_count += 1;
+                    }
+                    // println!("e: {}", e);
+                }
+            }
+        }
+        let mut lw = cloned_licenses.lock().await;
+        println!("licenses pull len: {}", lw.len());
+        pull_licenses_time.print("pull_licenses_time");
+
+        // for _ in 0..10 {
+        //     let closure = || async {
+        //         pull_licenses3(&client, &Vec::new(), false, true).await.map_err(|e| {
+        //             println!("pull_licenses3 error: {}", e);
+        //             e
+        //         })
+        //     };
+        //
+        //     loop {
+        //         match closure().await {
+        //             Ok(res) => {
+        //                 let mut lw = cloned_licenses.lock().await;
+        //                 lw.push(res);
+        //                 break;
+        //             }
+        //             Err(_) => {}
+        //         }
+        //     }
+        // }
+    });
+
+    // rt.block_on(async {
+    //     println!("explore started");
+    //     loop {}
+    // });
+
     let res = rt.block_on(async {
+        println!("explore started");
         // area_divisor: 1, 2, 4, 5, 10, 20
         // FIXME: const
         let args = ExploreArgs {
@@ -535,9 +717,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // tokio::join!(f1, f2);
     });
 
+    let mut cloned_licenses = licenses.clone();
+
     if let Ok(mut res) = res {
         rt.block_on(async {
-            let mut licenses: BinaryHeap<License> = BinaryHeap::with_capacity(10);
             let mut balance: Balance = Balance {
                 balance: 0,
                 wallet: Vec::with_capacity(500),
@@ -546,23 +729,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // let empty_wallet: Wallet = vec![];
 
             // let mut license_time = Arc::new(RwLock::new(Metric::default()));
-            let mut license_time = Arc::new(tokio::sync::RwLock::new(Metric::default()));
-            let mut dig_time = Arc::new(RwLock::new(Metric::default()));
-            let mut cash_time = Arc::new(RwLock::new(Metric::default()));
+            let license_time = Arc::new(tokio::sync::RwLock::new(Metric::default()));
+            let dig_time = Arc::new(RwLock::new(Metric::default()));
+            let cash_time = Arc::new(RwLock::new(Metric::default()));
 
-            let mut license_count = Arc::new(RwLock::new(Metric::default()));
-            let mut cash_count = Arc::new(RwLock::new(Metric::default()));
+            let license_count = Arc::new(RwLock::new(Metric::default()));
+            let cash_count = Arc::new(RwLock::new(Metric::default()));
+
+            let fx_builder: FxHashMapBuilder = FxHashMapBuilder::default();
+
+            let license_errors: ErrMapArc = Arc::new(RwLock::new(FxHashMap::with_capacity_and_hasher(100, fx_builder.clone())));
+            let dig_errors: ErrMapArc = Arc::new(RwLock::new(FxHashMap::with_capacity_and_hasher(100, fx_builder.clone())));
+            let cash_errors: ErrMapArc = Arc::new(RwLock::new(FxHashMap::with_capacity_and_hasher(100, fx_builder.clone())));
 
             let lt1 = license_time.clone();
             let dt1 = dig_time.clone();
             let ct1 = cash_time.clone();
             let lc1 = license_count.clone();
             let cc1 = cash_count.clone();
+            let le1 = license_errors.clone();
+            let de1 = dig_errors.clone();
+            let ce1 = cash_errors.clone();
 
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 let mut interval_iter = 0;
-
+                interval.tick().await;
                 loop {
                     interval.tick().await;
                     println!("interval_iter: {}", interval_iter);
@@ -616,6 +808,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ccr.count,
                         ccr.avg(),
                     );
+
+                    let ler = le1.read().await;
+                    for (error_code, count) in ler.iter() {
+                        println!("license_errors code: {}, count: {}", error_code, count);
+                    }
+
+                    let der = de1.read().await;
+                    for (error_code, count) in der.iter() {
+                        println!("dig_errors code: {}, count: {}", error_code, count);
+                    }
+
+                    let cer = ce1.read().await;
+                    for (error_code, count) in cer.iter() {
+                        println!("cash_errors code: {}, count: {}", error_code, count);
+                    }
+
                     interval_iter += 1;
                 }
             });
@@ -657,7 +865,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         };
 
                         let res = run_explore(args, false, 2).await;
-                        if let Ok(mut res) = res {
+                        if let Ok(res) = res {
                             // тут уже либо есть либо нет
                             let h = res.peek();
                             if let Some(report) = h {
@@ -667,31 +875,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                     let time = Instant::now();
 
-                                    let mut res: Option<(License, bool)> = get_license(&mut licenses, &mut balance, &client, 0).await;
-                                    for i in 0..100 {
+                                    println!("another licenses get start");
+                                    let mut res = get_license(&mut cloned_licenses, &mut balance, &client, 0).await;
+
+                                    for i in 1..50 {
                                         match res {
-                                            Some(_) => {
+                                            Ok(_) => {
                                                 break;
                                             }
-                                            None => {
-                                                res = get_license(&mut licenses, &mut balance, &client, i+1).await;
+                                            Err(e) => {
+                                                err_add(&license_errors, e).await;
+                                                res = get_license(&mut cloned_licenses, &mut balance, &client, i+1).await;
                                             }
                                         }
                                     }
-                                    let res = res.expect("license is None");
-                                    let mut license = res.0;
+                                    let res = res.expect("pull_licenses is error");
+                                    // let license = res.0;
                                     // TODO: тут будут считаться и локальные запросы, без запроса на сервер!!!
-                                    if res.1 {
+                                    if res {
                                         let millis = time.elapsed().as_millis() as u64;
                                         let mut ltw = license_time.write().await;
                                         // let mut ltw = license_time.write();
                                         ltw.update(millis);
                                         let mut lcw = license_count.write().await;
-                                        lcw.update(license.dig_allowed);
+                                        // lcw.update(license.dig_allowed); // TODO
                                     }
 
                                     let dig: Dig = Dig {
-                                        license_id: license.id,
+                                        // license_id: license.id,
+                                        license_id: 0, // TODO
                                         pos_x: x,
                                         pos_y: y,
                                         depth: 10, // TODO: ???
@@ -701,18 +913,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let millis = time.elapsed().as_millis() as u64;
                                     let mut dtw = dig_time.write().await;
                                     dtw.update(millis);
-                                    if let Ok(res) = res {
-                                        for t in res {
-                                            let time = Instant::now();
-                                            if let Ok(mut wallet) = cash3(&client, &t).await {
-                                                let millis = time.elapsed().as_millis() as u64;
-                                                let count = wallet.len();
-                                                let mut ctw = cash_time.write().await;
-                                                ctw.update(millis);
-                                                balance.balance += count as u64;
-                                                balance.wallet.append(&mut wallet);
-                                                let mut ccw = cash_count.write().await;
-                                                ccw.update(count as u64);
+                                    match res {
+                                        Ok(res) => {
+                                            for t in res {
+                                                let time = Instant::now();
+                                                match cash3(&client, &t).await {
+                                                    Ok(mut wallet) => {
+                                                        let millis = time.elapsed().as_millis() as u64;
+                                                        let count = wallet.len();
+                                                        let mut ctw = cash_time.write().await;
+                                                        ctw.update(millis);
+                                                        balance.balance += count as u64;
+                                                        balance.wallet.append(&mut wallet);
+                                                        let mut ccw = cash_count.write().await;
+
+                                                        ccw.update(count as u64);
+                                                    }
+                                                    Err(e) => {
+                                                        let mut w = cash_errors.write().await;
+                                                        match w.get_mut(&e) {
+                                                            Some(count) => {
+                                                                *count += 1;
+                                                            }
+                                                            None => {
+                                                                w.insert(e, 1);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let mut w = dig_errors.write().await;
+                                            match w.get_mut(&e) {
+                                                Some(count) => {
+                                                    *count += 1;
+                                                }
+                                                None => {
+                                                    w.insert(e, 1);
+                                                }
                                             }
                                         }
                                     }
